@@ -135,6 +135,17 @@ def init_db():
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS direct_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_account_id INTEGER NOT NULL,
+                recipient_account_id INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
         room_count = conn.execute("SELECT COUNT(*) FROM chat_rooms").fetchone()[0]
         if room_count == 0:
             default_rooms = [
@@ -171,6 +182,17 @@ def get_current_account():
         return None
 
     return {"id": row[0], "username": row[1]}
+
+
+def get_unread_dm_count(account_id):
+    if not account_id:
+        return 0
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM direct_messages WHERE recipient_account_id = ? AND is_read = 0",
+            (account_id,)
+        ).fetchone()
+    return row[0] if row else 0
 
 
 def migrate_visitor_to_account(old_visitor_id, account_id, username):
@@ -401,7 +423,13 @@ POSTS_HTML = """
             {% endif %}
 
             <div class="post-info">
-                <strong class="post-author">{{ post.nickname }}</strong>
+                {% if post.author_account_id %}
+                    <a href="/messages/{{ post.author_account_id }}" class="post-author-link" title="Poslať súkromnú správu">
+                        <strong class="post-author">{{ post.nickname }}</strong>
+                    </a>
+                {% else %}
+                    <strong class="post-author">{{ post.nickname }}</strong>
+                {% endif %}
                 · {{ post.created_at }}
             </div>
 
@@ -457,13 +485,18 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
     border-radius: 7px; padding: 6px 11px; font-size: 12px; cursor: pointer;
 }
 
-.nav-tabs { display: flex; gap: 10px; justify-content: center; margin-bottom: 22px; }
+.nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; text-align: center; padding: 12px; background: #1d2b40;
+    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
-    text-decoration: none; font-weight: bold;
+    text-decoration: none; font-weight: bold; font-size: 14px;
+    display: inline-flex; justify-content: center; align-items: center; gap: 6px;
 }
 .nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
+.unread-badge {
+    background: #ff405e; color: white; border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: bold;
+}
 
 .panel { background: #1d2b40; padding: 20px; border-radius: 15px; margin-bottom: 25px; }
 textarea {
@@ -522,6 +555,8 @@ button { cursor: pointer; }
 .post-message { white-space: pre-wrap; font-size: 16px; line-height: 1.5; }
 .post-info { color: #8ca0b8; font-size: 12px; margin-top: 12px; }
 .post-author { color: #42a5ff; }
+.post-author-link { text-decoration: none; }
+.post-author-link:hover .post-author { text-decoration: underline; }
 .error { color: #ff7777; margin-bottom: 12px; }
 .empty { text-align: center; color: #8ca0b8; padding: 25px; }
 .counter { text-align: right; color: #8ca0b8; font-size: 12px; margin-top: 5px; }
@@ -572,7 +607,11 @@ footer a:hover { color: #42a5ff; }
 
 <nav class="nav-tabs">
     <a href="/" class="nav-tab active">📋 Nástenka</a>
-    <a href="/chat" class="nav-tab">💬 Chatovacie miestnosti</a>
+    <a href="/chat" class="nav-tab">💬 Chat</a>
+    <a href="/messages" class="nav-tab">
+        ✉️ Súkromné
+        {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
+    </a>
 </nav>
 
 <div class="panel">
@@ -750,13 +789,18 @@ body { background: #101827; color: white; font-family: Arial, sans-serif; margin
 header { text-align: center; padding: 20px 10px; }
 h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
 .subtitle { color: #9aabc0; margin: 6px 0; }
-.nav-tabs { display: flex; gap: 10px; justify-content: center; margin-bottom: 22px; }
+.nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; text-align: center; padding: 12px; background: #1d2b40;
+    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
-    text-decoration: none; font-weight: bold;
+    text-decoration: none; font-weight: bold; font-size: 14px;
+    display: inline-flex; justify-content: center; align-items: center; gap: 6px;
 }
 .nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
+.unread-badge {
+    background: #ff405e; color: white; border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: bold;
+}
 .room-card {
     display: block; background: #1d2b40; padding: 18px 20px; border-radius: 14px;
     margin-bottom: 14px; border: 1px solid #344761; text-decoration: none; color: white;
@@ -785,7 +829,11 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
 </header>
 <nav class="nav-tabs">
     <a href="/" class="nav-tab">📋 Nástenka</a>
-    <a href="/chat" class="nav-tab active">💬 Chatovacie miestnosti</a>
+    <a href="/chat" class="nav-tab active">💬 Chat</a>
+    <a href="/messages" class="nav-tab">
+        ✉️ Súkromné
+        {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
+    </a>
 </nav>
 <div class="user-info-bar">
     <span>
@@ -956,6 +1004,271 @@ setInterval(() => loadMessages(false), 4000);
 
 
 # ==========================================
+# HTML PRE SUKROMNE SPRAVY (VARIANT A)
+# ==========================================
+
+DM_INBOX_HTML = """
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Súkromné správy - Moja komunita</title>
+<style>
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 650px; margin: auto; }
+header { text-align: center; padding: 20px 10px; }
+h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
+.subtitle { color: #9aabc0; margin: 6px 0; }
+.nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
+.nav-tab {
+    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
+    border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
+    text-decoration: none; font-weight: bold; font-size: 14px;
+    display: inline-flex; justify-content: center; align-items: center; gap: 6px;
+}
+.nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
+.unread-badge {
+    background: #ff405e; color: white; border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: bold;
+}
+.panel { background: #1d2b40; padding: 20px; border-radius: 15px; border: 1px solid #344761; margin-bottom: 20px; }
+.start-form { display: flex; gap: 10px; margin-top: 10px; }
+input[type=text] {
+    flex: 1; padding: 12px 14px; background: #101827; border: 1px solid #344761;
+    border-radius: 10px; color: white; font-size: 15px;
+}
+.primary-btn {
+    padding: 12px 18px; background: #2689e8; border: none; border-radius: 10px;
+    color: white; font-weight: bold; font-size: 14px; cursor: pointer; text-decoration: none;
+    display: inline-block;
+}
+.primary-btn:hover { background: #1472cb; }
+.error { background: rgba(217, 54, 80, 0.18); border: 1px solid #d93650; color: #ff99aa; padding: 10px 12px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+.conv-card {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    background: #1d2b40; padding: 16px 18px; border-radius: 12px;
+    border: 1px solid #344761; margin-bottom: 12px; text-decoration: none; color: white;
+}
+.conv-card:hover { border-color: #42a5ff; }
+.conv-name { font-size: 16px; font-weight: bold; color: #42a5ff; }
+.conv-handle { color: #8ca0b8; font-size: 12px; font-weight: normal; }
+.conv-preview { color: #b6c5d8; font-size: 14px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 430px; }
+.conv-meta { text-align: right; font-size: 12px; color: #8ca0b8; }
+.empty { text-align: center; color: #8ca0b8; padding: 25px; }
+.auth-cta { display: flex; gap: 12px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+.secondary-link {
+    padding: 12px 18px; background: #293c55; border: 1px solid #3d5678; border-radius: 10px;
+    color: #d6e4f5; text-decoration: none; font-weight: bold; font-size: 14px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+    <h1>MOJA KOMUNITA</h1>
+    <p class="subtitle">Súkromné 1-na-1 správy medzi účtami</p>
+</header>
+
+<nav class="nav-tabs">
+    <a href="/" class="nav-tab">📋 Nástenka</a>
+    <a href="/chat" class="nav-tab">💬 Chat</a>
+    <a href="/messages" class="nav-tab active">
+        ✉️ Súkromné
+        {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
+    </a>
+</nav>
+
+{% if not account %}
+    <div class="panel" style="text-align: center;">
+        <h2 style="margin-top: 0;">Súkromné správy sú pre registrované účty</h2>
+        <p class="subtitle">Prihlás sa alebo si vytvor bezplatný účet, aby si mohol písať súkromné správy ostatným členom komunity.</p>
+        <div class="auth-cta">
+            <a href="/login" class="primary-btn">Prihlásiť sa</a>
+            <a href="/register" class="secondary-link">Zaregistrovať sa</a>
+        </div>
+    </div>
+{% else %}
+    <div class="panel">
+        <h2 style="margin-top: 0;">✉️ Nová súkromná konverzácia</h2>
+        <p class="subtitle">Zadaj používateľské meno (napr. <code>marek_99</code>) alebo prezývku člena komunity.</p>
+        <form method="POST" action="/messages/start" class="start-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="target_user" maxlength="20" placeholder="Používateľské meno alebo prezývka..." required>
+            <button type="submit" class="primary-btn">Otvoriť čet</button>
+        </form>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    </div>
+
+    <h2>Tvoje konverzácie</h2>
+    {% for conv in conversations %}
+        <a href="/messages/{{ conv.partner_id }}" class="conv-card">
+            <div style="min-width: 0;">
+                <div class="conv-name">
+                    {{ conv.partner_nickname }}
+                    <span class="conv-handle">@{{ conv.partner_username }}</span>
+                </div>
+                <div class="conv-preview">{{ conv.last_message }}</div>
+            </div>
+            <div class="conv-meta">
+                <div>{{ conv.last_time }}</div>
+                {% if conv.unread > 0 %}
+                    <div style="margin-top: 6px;"><span class="unread-badge">{{ conv.unread }} nové</span></div>
+                {% endif %}
+            </div>
+        </a>
+    {% else %}
+        <div class="empty">Zatiaľ nemáš žiadne súkromné správy. Začni novú konverzáciu vyššie alebo klikni na meno autora pri príspevku na nástenke.</div>
+    {% endif %}
+{% endif %}
+</div>
+</body>
+</html>
+"""
+
+DM_THREAD_HTML = """
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Čet s {{ partner.nickname }} - Súkromné správy</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    background: #101827; color: white; font-family: Arial, sans-serif;
+    margin: 0; padding: 15px; height: 100dvh; display: flex; flex-direction: column;
+}
+.chat-wrapper { max-width: 650px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
+.chat-header {
+    background: #1d2b40; padding: 14px 18px; border-radius: 14px;
+    border: 1px solid #344761; display: flex; justify-content: space-between;
+    align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.back-btn { color: #42a5ff; text-decoration: none; font-weight: bold; font-size: 14px; }
+.room-info { text-align: center; }
+.room-info h2 { margin: 0; font-size: 18px; color: white; }
+.room-info small { color: #8ca0b8; font-size: 12px; }
+.messages-box {
+    flex: 1; background: #152133; border: 1px solid #344761; border-radius: 14px;
+    padding: 15px; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 10px; margin-bottom: 12px;
+}
+.msg {
+    max-width: 80%; padding: 10px 14px; border-radius: 14px; background: #1d2b40;
+    border: 1px solid #2c3f59; align-self: flex-start; overflow-wrap: anywhere;
+}
+.msg.mine { align-self: flex-end; background: #1a4b82; border-color: #2689e8; }
+.msg-meta { font-size: 11px; color: #8ca0b8; margin-bottom: 4px; }
+.msg.mine .msg-meta { color: #b8dcff; text-align: right; }
+.msg-text { font-size: 15px; line-height: 1.4; white-space: pre-wrap; }
+.chat-form { display: flex; gap: 10px; }
+.chat-input {
+    flex: 1; padding: 13px 15px; background: #1d2b40; border: 1px solid #344761;
+    border-radius: 12px; color: white; font-size: 15px;
+}
+.send-btn {
+    padding: 13px 20px; background: #2689e8; border: none; border-radius: 12px;
+    color: white; font-weight: bold; font-size: 15px; cursor: pointer;
+}
+.empty-chat { text-align: center; color: #71869f; margin: auto; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="chat-wrapper">
+<div class="chat-header">
+    <a href="/messages" class="back-btn">← Správy</a>
+    <div class="room-info">
+        <h2>{{ partner.nickname }}</h2>
+        <small>@{{ partner.username }}</small>
+    </div>
+    <div style="width: 65px;"></div>
+</div>
+
+<div class="messages-box" id="messages-box">
+    <div class="empty-chat">Načítavam konverzáciu...</div>
+</div>
+
+<form class="chat-form" id="dm-form">
+    <input type="text" id="dm-input" class="chat-input" maxlength="500" placeholder="Napíš súkromnú správu..." autocomplete="off" required>
+    <button type="submit" class="send-btn" id="send-btn">Odoslať</button>
+</form>
+</div>
+
+<script>
+const partnerId = {{ partner.id }};
+const messagesBox = document.getElementById("messages-box");
+const dmForm = document.getElementById("dm-form");
+const dmInput = document.getElementById("dm-input");
+const sendBtn = document.getElementById("send-btn");
+let lastRenderedJson = "";
+
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function loadThread(forceScroll = false) {
+    try {
+        const response = await fetch(`/messages/${partnerId}/data`, { cache: "no-store" });
+        if (!response.ok) return;
+        const messages = await response.json();
+        const currentJson = JSON.stringify(messages);
+        if (currentJson === lastRenderedJson) return;
+        lastRenderedJson = currentJson;
+
+        const isNearBottom = messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 90;
+
+        if (messages.length === 0) {
+            messagesBox.innerHTML = '<div class="empty-chat">Zatiaľ tu nie sú žiadne správy. Napíš prvú správu!</div>';
+            return;
+        }
+
+        messagesBox.innerHTML = messages.map(m => `
+            <div class="msg ${m.is_mine ? 'mine' : ''}">
+                <div class="msg-meta">${escapeHtml(m.created_at)}</div>
+                <div class="msg-text">${escapeHtml(m.message)}</div>
+            </div>
+        `).join("");
+
+        if (forceScroll || isNearBottom) {
+            messagesBox.scrollTop = messagesBox.scrollHeight;
+        }
+    } catch (e) {}
+}
+
+dmForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = dmInput.value.trim();
+    if (!text) return;
+    sendBtn.disabled = true;
+    try {
+        const response = await fetch(`/messages/${partnerId}/send`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+        });
+        if (response.ok) {
+            dmInput.value = "";
+            await loadThread(true);
+        }
+    } finally {
+        sendBtn.disabled = false;
+        dmInput.focus();
+    }
+});
+
+loadThread(true);
+setInterval(() => loadThread(false), 4000);
+</script>
+</body>
+</html>
+"""
+
+
+# ==========================================
 # REGISTRACIA, PRIHLASENIE A ODHLASENIE
 # ==========================================
 
@@ -1063,6 +1376,14 @@ def logout():
 # ZISKANIE PRISPEVKOV VRATANE ANKIET
 # ==========================================
 
+def parse_account_id_from_visitor(visitor_id):
+    if visitor_id and visitor_id.startswith("acc:"):
+        raw = visitor_id[4:]
+        if raw.isdigit():
+            return int(raw)
+    return None
+
+
 def get_posts():
     visitor_id = g.visitor_id
 
@@ -1072,6 +1393,7 @@ def get_posts():
                 p.id,
                 p.message,
                 p.created_at,
+                p.visitor_id,
                 COALESCE(u.nickname, 'Anonymný používateľ') AS nickname,
                 (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS like_count,
                 EXISTS (
@@ -1086,6 +1408,10 @@ def get_posts():
         posts = []
         for row in rows:
             post_id = row[0]
+            author_acc_id = parse_account_id_from_visitor(row[3])
+            if g.account and author_acc_id == g.account["id"]:
+                author_acc_id = None
+
             poll_row = conn.execute("SELECT id FROM polls WHERE post_id = ?", (post_id,)).fetchone()
             poll_data = None
 
@@ -1129,9 +1455,10 @@ def get_posts():
                 "id": row[0],
                 "message": row[1],
                 "created_at": row[2],
-                "nickname": row[3],
-                "like_count": row[4],
-                "liked": row[5],
+                "nickname": row[4],
+                "author_account_id": author_acc_id,
+                "like_count": row[5],
+                "liked": row[6],
                 "poll": poll_data
             })
 
@@ -1182,12 +1509,15 @@ def home():
 
     posts = get_posts()
     posts_html = render_template_string(POSTS_HTML, posts=posts)
+    unread_dm_count = get_unread_dm_count(g.account["id"]) if g.account else 0
+
     return render_template_string(
         HTML,
         posts_html=posts_html,
         message=message,
         nickname=get_nickname(),
-        account=g.account
+        account=g.account,
+        unread_dm_count=unread_dm_count
     )
 
 
@@ -1212,7 +1542,14 @@ def chat_rooms():
         {"id": r[0], "name": r[1], "description": r[2], "message_count": r[3]}
         for r in rows
     ]
-    return render_template_string(CHAT_ROOMS_HTML, rooms=rooms, nickname=get_nickname(), account=g.account)
+    unread_dm_count = get_unread_dm_count(g.account["id"]) if g.account else 0
+    return render_template_string(
+        CHAT_ROOMS_HTML,
+        rooms=rooms,
+        nickname=get_nickname(),
+        account=g.account,
+        unread_dm_count=unread_dm_count
+    )
 
 
 @app.route("/chat/<int:room_id>")
@@ -1278,6 +1615,215 @@ def chat_room_send(room_id):
             INSERT INTO chat_messages (room_id, visitor_id, message, created_at)
             VALUES (?, ?, ?, ?)
         """, (room_id, g.visitor_id, text, created_at))
+
+    return jsonify({"success": True})
+
+
+# ==========================================
+# SUKROMNE SPRAVY (VARIANT A - LEN PRE UCTY)
+# ==========================================
+
+def build_conversations_list(my_account_id):
+    with get_db() as conn:
+        partner_rows = conn.execute("""
+            SELECT DISTINCT
+                CASE
+                    WHEN sender_account_id = ? THEN recipient_account_id
+                    ELSE sender_account_id
+                END AS partner_id
+            FROM direct_messages
+            WHERE sender_account_id = ? OR recipient_account_id = ?
+        """, (my_account_id, my_account_id, my_account_id)).fetchall()
+
+        conversations = []
+        for (partner_id,) in partner_rows:
+            acc_row = conn.execute(
+                "SELECT id, username FROM accounts WHERE id = ?",
+                (partner_id,)
+            ).fetchone()
+            if not acc_row:
+                continue
+
+            nick_row = conn.execute(
+                "SELECT nickname FROM users WHERE visitor_id = ?",
+                (f"acc:{partner_id}",)
+            ).fetchone()
+            partner_nickname = nick_row[0] if (nick_row and nick_row[0]) else acc_row[1]
+
+            last_msg = conn.execute("""
+                SELECT message, created_at, id
+                FROM direct_messages
+                WHERE (sender_account_id = ? AND recipient_account_id = ?)
+                   OR (sender_account_id = ? AND recipient_account_id = ?)
+                ORDER BY id DESC
+                LIMIT 1
+            """, (my_account_id, partner_id, partner_id, my_account_id)).fetchone()
+
+            unread = conn.execute("""
+                SELECT COUNT(*)
+                FROM direct_messages
+                WHERE sender_account_id = ? AND recipient_account_id = ? AND is_read = 0
+            """, (partner_id, my_account_id)).fetchone()[0]
+
+            conversations.append({
+                "partner_id": partner_id,
+                "partner_username": acc_row[1],
+                "partner_nickname": partner_nickname,
+                "last_message": last_msg[0] if last_msg else "",
+                "last_time": last_msg[1] if last_msg else "",
+                "last_id": last_msg[2] if last_msg else 0,
+                "unread": unread
+            })
+
+        conversations.sort(key=lambda c: c["last_id"], reverse=True)
+        return conversations
+
+
+@app.route("/messages")
+def dm_inbox():
+    error = request.args.get("error", "")
+    conversations = build_conversations_list(g.account["id"]) if g.account else []
+    unread_dm_count = get_unread_dm_count(g.account["id"]) if g.account else 0
+
+    return render_template_string(
+        DM_INBOX_HTML,
+        account=g.account,
+        conversations=conversations,
+        unread_dm_count=unread_dm_count,
+        error=error,
+        csrf_token=get_auth_csrf()
+    )
+
+
+@app.route("/messages/start", methods=["POST"])
+def dm_start():
+    if not g.account:
+        return redirect("/login")
+    if not valid_auth_csrf():
+        return redirect("/messages?error=Neplatn%C3%A1+po%C5%BEiadavka.")
+
+    query = request.form.get("target_user", "").strip().lstrip("@")
+    if not query:
+        return redirect("/messages?error=Zadaj+pou%C5%BE%C3%ADvate%C4%BEsk%C3%A9+meno+alebo+prez%C3%BDvku.")
+
+    with get_db() as conn:
+        acc = conn.execute(
+            "SELECT id FROM accounts WHERE LOWER(username) = LOWER(?)",
+            (query,)
+        ).fetchone()
+
+        if not acc:
+            user_match = conn.execute("""
+                SELECT visitor_id
+                FROM users
+                WHERE visitor_id LIKE 'acc:%' AND LOWER(nickname) = LOWER(?)
+                LIMIT 1
+            """, (query,)).fetchone()
+            if user_match:
+                acc_id = parse_account_id_from_visitor(user_match[0])
+                if acc_id:
+                    acc = (acc_id,)
+
+    if not acc:
+        return redirect("/messages?error=Pou%C5%BE%C3%ADvate%C4%BE+s+t%C3%BDmto+menom+alebo+prez%C3%BDvkou+sa+nena%C5%A1iel.")
+
+    if acc[0] == g.account["id"]:
+        return redirect("/messages?error=Nem%C3%B4%C5%BEe%C5%A1+posla%C5%A5+s%C3%BAkromn%C3%BA+spr%C3%A1vu+s%C3%A1m+sebe.")
+
+    return redirect(f"/messages/{acc[0]}")
+
+
+@app.route("/messages/<int:partner_id>")
+def dm_thread(partner_id):
+    if not g.account:
+        return redirect("/login")
+    if partner_id == g.account["id"]:
+        return redirect("/messages")
+
+    with get_db() as conn:
+        acc_row = conn.execute(
+            "SELECT id, username FROM accounts WHERE id = ?",
+            (partner_id,)
+        ).fetchone()
+        if not acc_row:
+            return redirect("/messages?error=Pou%C5%BE%C3%ADvate%C4%BE+neexistuje.")
+
+        nick_row = conn.execute(
+            "SELECT nickname FROM users WHERE visitor_id = ?",
+            (f"acc:{partner_id}",)
+        ).fetchone()
+        partner_nickname = nick_row[0] if (nick_row and nick_row[0]) else acc_row[1]
+
+        conn.execute("""
+            UPDATE direct_messages
+            SET is_read = 1
+            WHERE sender_account_id = ? AND recipient_account_id = ? AND is_read = 0
+        """, (partner_id, g.account["id"]))
+
+    return render_template_string(
+        DM_THREAD_HTML,
+        partner={"id": acc_row[0], "username": acc_row[1], "nickname": partner_nickname}
+    )
+
+
+@app.route("/messages/<int:partner_id>/data")
+def dm_thread_data(partner_id):
+    if not g.account:
+        return jsonify({"error": "Neprihlásený používateľ."}), 401
+
+    my_id = g.account["id"]
+    with get_db() as conn:
+        conn.execute("""
+            UPDATE direct_messages
+            SET is_read = 1
+            WHERE sender_account_id = ? AND recipient_account_id = ? AND is_read = 0
+        """, (partner_id, my_id))
+
+        rows = conn.execute("""
+            SELECT * FROM (
+                SELECT id, sender_account_id, message, created_at
+                FROM direct_messages
+                WHERE (sender_account_id = ? AND recipient_account_id = ?)
+                   OR (sender_account_id = ? AND recipient_account_id = ?)
+                ORDER BY id DESC
+                LIMIT 100
+            ) sub
+            ORDER BY id ASC
+        """, (my_id, partner_id, partner_id, my_id)).fetchall()
+
+    return jsonify([
+        {
+            "id": r[0],
+            "is_mine": (r[1] == my_id),
+            "message": r[2],
+            "created_at": r[3]
+        }
+        for r in rows
+    ])
+
+
+@app.route("/messages/<int:partner_id>/send", methods=["POST"])
+def dm_thread_send(partner_id):
+    if not g.account:
+        return jsonify({"error": "Neprihlásený používateľ."}), 401
+    if partner_id == g.account["id"]:
+        return jsonify({"error": "Nemôžeš písať sám sebe."}), 400
+
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("message", "")).strip()
+    if not text or len(text) > 500:
+        return jsonify({"error": "Neplatná správa."}), 400
+
+    with get_db() as conn:
+        partner = conn.execute("SELECT id FROM accounts WHERE id = ?", (partner_id,)).fetchone()
+        if not partner:
+            return jsonify({"error": "Používateľ neexistuje."}), 404
+
+        created_at = datetime.now().strftime("%d.%m. %H:%M")
+        conn.execute("""
+            INSERT INTO direct_messages (sender_account_id, recipient_account_id, message, created_at, is_read)
+            VALUES (?, ?, ?, ?, 0)
+        """, (g.account["id"], partner_id, text, created_at))
 
     return jsonify({"success": True})
 
