@@ -35,128 +35,136 @@ ADMIN_PASSWORD_HASH = os.environ.get(
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "komunita.db")
+_DB_READY = False
+
+
+def ensure_schema(conn):
+    global _DB_READY
+    if _DB_READY:
+        return
+
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            visitor_id TEXT
+        )
+    """)
+
+    columns = [
+        row[1] for row in
+        conn.execute("PRAGMA table_info(posts)").fetchall()
+    ]
+    if "visitor_id" not in columns:
+        conn.execute("ALTER TABLE posts ADD COLUMN visitor_id TEXT")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS likes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            visitor_id TEXT NOT NULL,
+            UNIQUE(post_id, visitor_id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            visitor_id TEXT PRIMARY KEY,
+            nickname TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS polls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL UNIQUE
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS poll_options (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            poll_id INTEGER NOT NULL,
+            option_text TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS poll_votes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            poll_id INTEGER NOT NULL,
+            option_id INTEGER NOT NULL,
+            visitor_id TEXT NOT NULL,
+            UNIQUE(poll_id, visitor_id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_rooms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL DEFAULT ''
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_id INTEGER NOT NULL,
+            visitor_id TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS direct_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_account_id INTEGER NOT NULL,
+            recipient_account_id INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_read INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    room_count = conn.execute("SELECT COUNT(*) FROM chat_rooms").fetchone()[0]
+    if room_count == 0:
+        default_rooms = [
+            ("💬 Všeobecný pokec", "Voľná debata o všetkom možnom"),
+            ("🎮 Hry a zábava", "Pokec o hrách, filmoch a seriáloch"),
+            ("🌙 Nočná zmena", "Pre tých, ktorí ešte nespia")
+        ]
+        conn.executemany(
+            "INSERT INTO chat_rooms (name, description) VALUES (?, ?)",
+            default_rooms
+        )
+
+    _DB_READY = True
 
 
 def get_db():
-    conn = sqlite3.connect(DB_FILE, timeout=10)
-    conn.execute("PRAGMA foreign_keys = ON;")
+    conn = sqlite3.connect(DB_FILE, timeout=15)
+    ensure_schema(conn)
     return conn
 
 
-# ==========================================
-# DATABAZA
-# ==========================================
-
 def init_db():
-    with get_db() as conn:
-        conn.execute("PRAGMA journal_mode=WAL;")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                visitor_id TEXT
-            )
-        """)
-
-        columns = [
-            row[1] for row in
-            conn.execute("PRAGMA table_info(posts)").fetchall()
-        ]
-        if "visitor_id" not in columns:
-            conn.execute("ALTER TABLE posts ADD COLUMN visitor_id TEXT")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS likes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL,
-                visitor_id TEXT NOT NULL,
-                UNIQUE(post_id, visitor_id)
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                visitor_id TEXT PRIMARY KEY,
-                nickname TEXT NOT NULL
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS polls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                post_id INTEGER NOT NULL UNIQUE
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS poll_options (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                poll_id INTEGER NOT NULL,
-                option_text TEXT NOT NULL
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS poll_votes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                poll_id INTEGER NOT NULL,
-                option_id INTEGER NOT NULL,
-                visitor_id TEXT NOT NULL,
-                UNIQUE(poll_id, visitor_id)
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS chat_rooms (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                description TEXT NOT NULL DEFAULT ''
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                room_id INTEGER NOT NULL,
-                visitor_id TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS direct_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender_account_id INTEGER NOT NULL,
-                recipient_account_id INTEGER NOT NULL,
-                message TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                is_read INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-
-        room_count = conn.execute("SELECT COUNT(*) FROM chat_rooms").fetchone()[0]
-        if room_count == 0:
-            default_rooms = [
-                ("💬 Všeobecný pokec", "Voľná debata o všetkom možnom"),
-                ("🎮 Hry a zábava", "Pokec o hrách, filmoch a seriáloch"),
-                ("🌙 Nočná zmena", "Pre tých, ktorí ešte nespia")
-            ]
-            conn.executemany(
-                "INSERT INTO chat_rooms (name, description) VALUES (?, ?)",
-                default_rooms
-            )
+    with get_db():
+        pass
 
 
 init_db()
@@ -1004,7 +1012,7 @@ setInterval(() => loadMessages(false), 4000);
 
 
 # ==========================================
-# HTML PRE SUKROMNE SPRAVY (VARIANT A)
+# HTML PRE SUKROMNE SPRAVY
 # ==========================================
 
 DM_INBOX_HTML = """
@@ -1056,7 +1064,7 @@ input[type=text] {
 .conv-handle { color: #8ca0b8; font-size: 12px; font-weight: normal; }
 .conv-preview { color: #b6c5d8; font-size: 14px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 430px; }
 .conv-meta { text-align: right; font-size: 12px; color: #8ca0b8; }
-.empty { text-align: center; color: #8ca0b8; padding: 25px; }
+.empty { text-align: center; color: #8ca0b8; padding: 25px; background: #152133; border: 1px solid #344761; border-radius: 12px; }
 .auth-cta { display: flex; gap: 12px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
 .secondary-link {
     padding: 12px 18px; background: #293c55; border: 1px solid #3d5678; border-radius: 10px;
@@ -1102,24 +1110,28 @@ input[type=text] {
     </div>
 
     <h2>Tvoje konverzácie</h2>
-    {% for conv in conversations %}
-        <a href="/messages/{{ conv.partner_id }}" class="conv-card">
-            <div style="min-width: 0;">
-                <div class="conv-name">
-                    {{ conv.partner_nickname }}
-                    <span class="conv-handle">@{{ conv.partner_username }}</span>
+    {% if conversations %}
+        {% for conv in conversations %}
+            <a href="/messages/{{ conv.partner_id }}" class="conv-card">
+                <div style="min-width: 0;">
+                    <div class="conv-name">
+                        {{ conv.partner_nickname }}
+                        <span class="conv-handle">@{{ conv.partner_username }}</span>
+                    </div>
+                    <div class="conv-preview">{{ conv.last_message }}</div>
                 </div>
-                <div class="conv-preview">{{ conv.last_message }}</div>
-            </div>
-            <div class="conv-meta">
-                <div>{{ conv.last_time }}</div>
-                {% if conv.unread > 0 %}
-                    <div style="margin-top: 6px;"><span class="unread-badge">{{ conv.unread }} nové</span></div>
-                {% endif %}
-            </div>
-        </a>
+                <div class="conv-meta">
+                    <div>{{ conv.last_time }}</div>
+                    {% if conv.unread > 0 %}
+                        <div style="margin-top: 6px;"><span class="unread-badge">{{ conv.unread }} nové</span></div>
+                    {% endif %}
+                </div>
+            </a>
+        {% endfor %}
     {% else %}
-        <div class="empty">Zatiaľ nemáš žiadne súkromné správy. Začni novú konverzáciu vyššie alebo klikni na meno autora pri príspevku na nástenke.</div>
+        <div class="empty">
+            Zatiaľ nemáš žiadne súkromné správy (0 správ). Začni novú konverzáciu cez formulár vyššie alebo klikni na meno autora pri príspevku na nástenke.
+        </div>
     {% endif %}
 {% endif %}
 </div>
@@ -1620,10 +1632,13 @@ def chat_room_send(room_id):
 
 
 # ==========================================
-# SUKROMNE SPRAVY (VARIANT A - LEN PRE UCTY)
+# SUKROMNE SPRAVY
 # ==========================================
 
 def build_conversations_list(my_account_id):
+    if not my_account_id:
+        return []
+
     with get_db() as conn:
         partner_rows = conn.execute("""
             SELECT DISTINCT
@@ -1637,6 +1652,9 @@ def build_conversations_list(my_account_id):
 
         conversations = []
         for (partner_id,) in partner_rows:
+            if not partner_id or partner_id == my_account_id:
+                continue
+
             acc_row = conn.execute(
                 "SELECT id, username FROM accounts WHERE id = ?",
                 (partner_id,)
@@ -1682,8 +1700,9 @@ def build_conversations_list(my_account_id):
 @app.route("/messages")
 def dm_inbox():
     error = request.args.get("error", "")
-    conversations = build_conversations_list(g.account["id"]) if g.account else []
-    unread_dm_count = get_unread_dm_count(g.account["id"]) if g.account else 0
+    acc_id = g.account["id"] if g.account else None
+    conversations = build_conversations_list(acc_id) if acc_id else []
+    unread_dm_count = get_unread_dm_count(acc_id) if acc_id else 0
 
     return render_template_string(
         DM_INBOX_HTML,
