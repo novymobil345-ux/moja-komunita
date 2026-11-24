@@ -1,19 +1,16 @@
 from flask import (
     Flask, request, redirect, render_template_string,
-    jsonify, g, session, url_for
+    jsonify, g, session
 )
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
 import os
 import re
-import uuid
 import secrets
 from datetime import datetime
-from PIL import Image, ImageOps, UnidentifiedImageError
 
 app = Flask(__name__)
-
-from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # ==========================================
@@ -26,7 +23,6 @@ app.secret_key = os.environ.get(
 )
 
 app.config.update(
-    MAX_CONTENT_LENGTH=15 * 1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
 )
@@ -39,9 +35,6 @@ ADMIN_PASSWORD_HASH = os.environ.get(
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "komunita.db")
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 def get_db():
@@ -71,7 +64,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 message TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                visitor_id TEXT
             )
         """)
 
@@ -79,10 +73,6 @@ def init_db():
             row[1] for row in
             conn.execute("PRAGMA table_info(posts)").fetchall()
         ]
-
-        if "image" not in columns:
-            conn.execute("ALTER TABLE posts ADD COLUMN image TEXT")
-
         if "visitor_id" not in columns:
             conn.execute("ALTER TABLE posts ADD COLUMN visitor_id TEXT")
 
@@ -102,7 +92,6 @@ def init_db():
             )
         """)
 
-        # TABULKY PRE ANKETY
         conn.execute("""
             CREATE TABLE IF NOT EXISTS polls (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,7 +117,6 @@ def init_db():
             )
         """)
 
-        # TABULKY PRE CHATOVACIE MIESTNOSTI
         conn.execute("""
             CREATE TABLE IF NOT EXISTS chat_rooms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,7 +174,6 @@ def get_current_account():
 
 
 def migrate_visitor_to_account(old_visitor_id, account_id, username):
-    """Presunie anonymnú aktivitu na účet a zjednotí identitu."""
     account_key = f"acc:{account_id}"
 
     with get_db() as conn:
@@ -215,7 +202,6 @@ def migrate_visitor_to_account(old_visitor_id, account_id, username):
                 (account_key, old_visitor_id)
             )
 
-            # Lajky – ak už má účet lajk na danom príspevku, starý vymažeme
             old_likes = conn.execute(
                 "SELECT id, post_id FROM likes WHERE visitor_id = ?",
                 (old_visitor_id,)
@@ -230,7 +216,6 @@ def migrate_visitor_to_account(old_visitor_id, account_id, username):
                 else:
                     conn.execute("UPDATE likes SET visitor_id = ? WHERE id = ?", (account_key, like_id))
 
-            # Hlasy v anketách – ak už účet hlasoval, starý hlas vymažeme
             old_votes = conn.execute(
                 "SELECT id, poll_id FROM poll_votes WHERE visitor_id = ?",
                 (old_visitor_id,)
@@ -315,159 +300,44 @@ AUTH_HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }} - Moja komunita</title>
-
 <style>
-* {
-    box-sizing: border-box;
-}
-
-body {
-    background: #101827;
-    color: white;
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 20px;
-}
-
-.container {
-    max-width: 480px;
-    margin: auto;
-}
-
-header {
-    text-align: center;
-    padding: 20px 10px;
-}
-
-h1 {
-    color: #42a5ff;
-    font-size: 30px;
-    margin: 0 0 8px 0;
-}
-
-.subtitle {
-    color: #9aabc0;
-    margin: 6px 0;
-    font-size: 14px;
-}
-
-.panel {
-    background: #1d2b40;
-    padding: 24px;
-    border-radius: 15px;
-    border: 1px solid #344761;
-}
-
-input {
-    width: 100%;
-    margin-top: 10px;
-    padding: 12px;
-    background: #101827;
-    border: 1px solid #344761;
-    border-radius: 10px;
-    color: white;
-    font-size: 15px;
-}
-
-button {
-    width: 100%;
-    margin-top: 16px;
-    padding: 14px;
-    background: #2689e8;
-    border: none;
-    border-radius: 9px;
-    color: white;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-}
-
-button:hover {
-    background: #1472cb;
-}
-
-.error {
-    background: rgba(217, 54, 80, 0.18);
-    border: 1px solid #d93650;
-    color: #ff99aa;
-    padding: 10px 12px;
-    border-radius: 8px;
-    margin-bottom: 12px;
-    font-size: 14px;
-}
-
-.switch-link {
-    text-align: center;
-    margin-top: 18px;
-    font-size: 14px;
-    color: #9aabc0;
-}
-
-.switch-link a,
-.back-link {
-    color: #42a5ff;
-    text-decoration: none;
-}
-
-.back-link {
-    display: inline-block;
-    margin-bottom: 15px;
-    font-size: 14px;
-}
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 480px; margin: auto; }
+header { text-align: center; padding: 20px 10px; }
+h1 { color: #42a5ff; font-size: 30px; margin: 0 0 8px 0; }
+.subtitle { color: #9aabc0; margin: 6px 0; font-size: 14px; }
+.panel { background: #1d2b40; padding: 24px; border-radius: 15px; border: 1px solid #344761; }
+input { width: 100%; margin-top: 10px; padding: 12px; background: #101827; border: 1px solid #344761; border-radius: 10px; color: white; font-size: 15px; }
+button { width: 100%; margin-top: 16px; padding: 14px; background: #2689e8; border: none; border-radius: 9px; color: white; font-size: 16px; font-weight: bold; cursor: pointer; }
+button:hover { background: #1472cb; }
+.error { background: rgba(217, 54, 80, 0.18); border: 1px solid #d93650; color: #ff99aa; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+.switch-link { text-align: center; margin-top: 18px; font-size: 14px; color: #9aabc0; }
+.switch-link a, .back-link { color: #42a5ff; text-decoration: none; }
+.back-link { display: inline-block; margin-bottom: 15px; font-size: 14px; }
 </style>
 </head>
-
 <body>
 <div class="container">
     <a href="/" class="back-link">← Späť na nástenku</a>
-
     <header>
         <h1>{{ title }}</h1>
         <p class="subtitle">{{ subtitle }}</p>
     </header>
-
     <div class="panel">
-        {% if error %}
-            <div class="error">{{ error }}</div>
-        {% endif %}
-
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-
             <label class="subtitle" for="username">Používateľské meno (3–20 znakov)</label>
-            <input
-                id="username"
-                type="text"
-                name="username"
-                maxlength="20"
-                value="{{ username_val }}"
-                placeholder="napr. marek_99"
-                required
-            >
-
+            <input id="username" type="text" name="username" maxlength="20" value="{{ username_val }}" placeholder="napr. marek_99" required>
             <label class="subtitle" for="password" style="display:block; margin-top:12px;">Heslo (aspoň 6 znakov)</label>
-            <input
-                id="password"
-                type="password"
-                name="password"
-                placeholder="Zadaj heslo"
-                required
-            >
-
+            <input id="password" type="password" name="password" placeholder="Zadaj heslo" required>
             {% if mode == "register" %}
                 <label class="subtitle" for="password2" style="display:block; margin-top:12px;">Potvrď heslo</label>
-                <input
-                    id="password2"
-                    type="password"
-                    name="password2"
-                    placeholder="Zopakuj heslo"
-                    required
-                >
+                <input id="password2" type="password" name="password2" placeholder="Zopakuj heslo" required>
             {% endif %}
-
             <button type="submit">{{ button_text }}</button>
         </form>
-
         <div class="switch-link">
             {% if mode == "login" %}
                 Nemáš ešte účet? <a href="/register">Zaregistruj sa</a>
@@ -507,15 +377,6 @@ POSTS_HTML = """
                 <div class="post-message">{{ post.message }}</div>
             {% endif %}
 
-            {% if post.image %}
-                <img
-                    class="post-image"
-                    src="{{ url_for('static', filename='uploads/' + post.image) }}"
-                    alt="Fotografia v anonymnom príspevku"
-                    loading="lazy"
-                >
-            {% endif %}
-
             {% if post.poll %}
                 <div class="poll-box" data-poll-id="{{ post.poll.id }}">
                     {% for opt in post.poll.options %}
@@ -525,17 +386,10 @@ POSTS_HTML = """
                             class="poll-option {% if is_selected %}selected{% endif %} {% if post.poll.user_vote %}voted{% endif %}"
                             onclick="votePoll({{ post.poll.id }}, {{ opt.id }}, this)"
                         >
-                            <div
-                                class="poll-bar"
-                                style="width: {{ opt.percent if post.poll.user_vote else 0 }}%;"
-                            ></div>
-                            <span class="poll-text">
-                                {% if is_selected %}✓ {% endif %}{{ opt.text }}
-                            </span>
+                            <div class="poll-bar" style="width: {{ opt.percent if post.poll.user_vote else 0 }}%;"></div>
+                            <span class="poll-text">{% if is_selected %}✓ {% endif %}{{ opt.text }}</span>
                             {% if post.poll.user_vote %}
-                                <span class="poll-stats">
-                                    {{ opt.percent }}% ({{ opt.votes }})
-                                </span>
+                                <span class="poll-stats">{{ opt.percent }}% ({{ opt.votes }})</span>
                             {% endif %}
                         </button>
                     {% endfor %}
@@ -567,9 +421,7 @@ POSTS_HTML = """
         </div>
     {% endfor %}
 {% else %}
-    <div class="empty">
-        Zatiaľ tu nikto nič nepridal. Buď prvý!
-    </div>
+    <div class="empty">Zatiaľ tu nikto nič nepridal. Buď prvý!</div>
 {% endif %}
 """
 
@@ -585,444 +437,114 @@ HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Moja komunita</title>
-
 <style>
-* {
-    box-sizing: border-box;
-}
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 650px; margin: auto; }
+header { text-align: center; padding: 20px 10px; }
+h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
+.subtitle { color: #9aabc0; margin: 6px 0; }
 
-body {
-    background: #101827;
-    color: white;
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 20px;
-}
-
-.container {
-    max-width: 650px;
-    margin: auto;
-}
-
-header {
-    text-align: center;
-    padding: 20px 10px;
-}
-
-h1 {
-    color: #42a5ff;
-    font-size: 32px;
-    margin: 0 0 8px 0;
-}
-
-.subtitle {
-    color: #9aabc0;
-    margin: 6px 0;
-}
-
-/* UCET BAR */
 .account-bar {
-    background: #152133;
-    border: 1px solid #344761;
-    border-radius: 12px;
-    padding: 12px 16px;
-    margin-bottom: 14px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    font-size: 14px;
+    background: #152133; border: 1px solid #344761; border-radius: 12px;
+    padding: 12px 16px; margin-bottom: 14px; display: flex;
+    justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px;
 }
-
-.account-actions {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-}
-
-.account-link {
-    color: #42a5ff;
-    text-decoration: none;
-    font-weight: bold;
-    font-size: 13px;
-}
-
-.account-link:hover {
-    text-decoration: underline;
-}
-
+.account-actions { display: flex; gap: 10px; align-items: center; }
+.account-link { color: #42a5ff; text-decoration: none; font-weight: bold; font-size: 13px; }
 .logout-inline-btn {
-    background: #293c55;
-    color: #d6e4f5;
-    border: 1px solid #3d5678;
-    border-radius: 7px;
-    padding: 6px 11px;
-    font-size: 12px;
-    cursor: pointer;
+    background: #293c55; color: #d6e4f5; border: 1px solid #3d5678;
+    border-radius: 7px; padding: 6px 11px; font-size: 12px; cursor: pointer;
 }
 
-.logout-inline-btn:hover {
-    background: #334b6b;
-}
-
-/* NAVIGACIA */
-.nav-tabs {
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    margin-bottom: 22px;
-}
-
+.nav-tabs { display: flex; gap: 10px; justify-content: center; margin-bottom: 22px; }
 .nav-tab {
-    flex: 1;
-    text-align: center;
-    padding: 12px;
-    background: #1d2b40;
-    border: 1px solid #344761;
-    border-radius: 10px;
-    color: #b6c5d8;
-    text-decoration: none;
-    font-weight: bold;
-    transition: 0.15s;
+    flex: 1; text-align: center; padding: 12px; background: #1d2b40;
+    border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
+    text-decoration: none; font-weight: bold;
 }
+.nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
 
-.nav-tab:hover {
-    border-color: #42a5ff;
-    color: white;
-}
-
-.nav-tab.active {
-    background: #2689e8;
-    border-color: #2689e8;
-    color: white;
-}
-
-.panel {
-    background: #1d2b40;
-    padding: 20px;
-    border-radius: 15px;
-    margin-bottom: 25px;
-}
-
+.panel { background: #1d2b40; padding: 20px; border-radius: 15px; margin-bottom: 25px; }
 textarea {
-    width: 100%;
-    height: 100px;
-    padding: 13px;
-    border: 1px solid #344761;
-    border-radius: 10px;
-    background: #101827;
-    color: white;
-    resize: vertical;
-    font-size: 16px;
+    width: 100%; height: 100px; padding: 13px; border: 1px solid #344761;
+    border-radius: 10px; background: #101827; color: white; resize: vertical; font-size: 16px;
 }
-
-input[type=file],
 input[type=text] {
-    width: 100%;
-    margin-top: 10px;
-    padding: 12px;
-    background: #101827;
-    border: 1px solid #344761;
-    border-radius: 10px;
-    color: white;
-    font-size: 15px;
+    width: 100%; margin-top: 10px; padding: 12px; background: #101827;
+    border: 1px solid #344761; border-radius: 10px; color: white; font-size: 15px;
 }
-
-button {
-    cursor: pointer;
+button { cursor: pointer; }
+.submit-button, .nickname-button {
+    width: 100%; margin-top: 14px; padding: 14px; background: #2689e8;
+    border: none; border-radius: 9px; color: white; font-size: 16px;
 }
-
-.submit-button,
-.nickname-button {
-    width: 100%;
-    margin-top: 14px;
-    padding: 14px;
-    background: #2689e8;
-    border: none;
-    border-radius: 9px;
-    color: white;
-    font-size: 16px;
-}
-
-.submit-button:hover,
-.nickname-button:hover {
-    background: #1472cb;
-}
-
-/* TVORBA ANKETY */
+.submit-button:hover, .nickname-button:hover { background: #1472cb; }
 
 .poll-toggle-btn {
-    margin-top: 12px;
-    padding: 9px 14px;
-    background: #293c55;
-    border: 1px solid #3d5678;
-    border-radius: 8px;
-    color: #d6e4f5;
-    font-size: 14px;
+    margin-top: 12px; padding: 9px 14px; background: #293c55;
+    border: 1px solid #3d5678; border-radius: 8px; color: #d6e4f5; font-size: 14px;
 }
-
-.poll-toggle-btn:hover {
-    background: #334b6b;
-}
-
 .poll-creator {
-    display: none;
-    margin-top: 12px;
-    padding: 14px;
-    background: #152133;
-    border: 1px solid #344761;
-    border-radius: 10px;
+    display: none; margin-top: 12px; padding: 14px; background: #152133;
+    border: 1px solid #344761; border-radius: 10px;
 }
-
-.poll-creator.open {
-    display: block;
-}
-
-.poll-option-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.poll-option-row input {
-    margin-top: 8px;
-}
-
+.poll-creator.open { display: block; }
+.poll-option-row { display: flex; gap: 8px; align-items: center; }
+.poll-option-row input { margin-top: 8px; }
 .remove-option-btn {
-    margin-top: 8px;
-    padding: 11px 13px;
-    background: #3a2330;
-    border: 1px solid #63344b;
-    border-radius: 8px;
-    color: #ff8fa3;
-    font-size: 14px;
+    margin-top: 8px; padding: 11px 13px; background: #3a2330;
+    border: 1px solid #63344b; border-radius: 8px; color: #ff8fa3; font-size: 14px;
 }
-
 .add-option-btn {
-    margin-top: 10px;
-    padding: 8px 12px;
-    background: transparent;
-    border: 1px dashed #42a5ff;
-    border-radius: 8px;
-    color: #42a5ff;
-    font-size: 13px;
+    margin-top: 10px; padding: 8px 12px; background: transparent;
+    border: 1px dashed #42a5ff; border-radius: 8px; color: #42a5ff; font-size: 13px;
 }
 
-/* ZOBRAZENIE ANKETY V PRISPEVKU */
-
-.poll-box {
-    margin-top: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
+.poll-box { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
 .poll-option {
-    position: relative;
-    width: 100%;
-    text-align: left;
-    padding: 11px 14px;
-    background: #101827;
-    border: 1px solid #344761;
-    border-radius: 9px;
-    color: white;
-    font-size: 14px;
-    overflow: hidden;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    transition: border-color 0.15s;
+    position: relative; width: 100%; text-align: left; padding: 11px 14px;
+    background: #101827; border: 1px solid #344761; border-radius: 9px;
+    color: white; font-size: 14px; overflow: hidden; display: flex;
+    justify-content: space-between; align-items: center; gap: 10px;
 }
-
-.poll-option:hover {
-    border-color: #42a5ff;
-}
-
-.poll-option.selected {
-    border-color: #42a5ff;
-    font-weight: bold;
-}
-
+.poll-option.selected { border-color: #42a5ff; font-weight: bold; }
 .poll-bar {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    background: rgba(38, 137, 232, 0.25);
-    z-index: 0;
-    transition: width 0.3s ease;
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: rgba(38, 137, 232, 0.25); z-index: 0;
 }
+.poll-option.selected .poll-bar { background: rgba(66, 165, 255, 0.38); }
+.poll-text, .poll-stats { position: relative; z-index: 1; }
+.poll-stats { color: #b6c5d8; font-size: 13px; white-space: nowrap; }
+.poll-total { font-size: 12px; color: #8ca0b8; margin-top: 2px; }
 
-.poll-option.selected .poll-bar {
-    background: rgba(66, 165, 255, 0.38);
-}
+.post { background: #1d2b40; padding: 18px; border-radius: 12px; margin-bottom: 13px; overflow-wrap: anywhere; }
+.post-message { white-space: pre-wrap; font-size: 16px; line-height: 1.5; }
+.post-info { color: #8ca0b8; font-size: 12px; margin-top: 12px; }
+.post-author { color: #42a5ff; }
+.error { color: #ff7777; margin-bottom: 12px; }
+.empty { text-align: center; color: #8ca0b8; padding: 25px; }
+.counter { text-align: right; color: #8ca0b8; font-size: 12px; margin-top: 5px; }
+.refresh-info { color: #71869f; font-size: 12px; text-align: center; margin-bottom: 15px; }
+.nickname-status { color: #8ca0b8; font-size: 13px; margin-top: 10px; }
 
-.poll-text,
-.poll-stats {
-    position: relative;
-    z-index: 1;
-}
-
-.poll-stats {
-    color: #b6c5d8;
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-.poll-total {
-    font-size: 12px;
-    color: #8ca0b8;
-    margin-top: 2px;
-}
-
-/* PRISPEVKY */
-
-.post {
-    background: #1d2b40;
-    padding: 18px;
-    border-radius: 12px;
-    margin-bottom: 13px;
-    overflow-wrap: anywhere;
-}
-
-.post-message {
-    white-space: pre-wrap;
-    font-size: 16px;
-    line-height: 1.5;
-}
-
-.post-image {
-    width: 100%;
-    max-height: 450px;
-    object-fit: contain;
-    border-radius: 10px;
-    margin-top: 12px;
-    background: #101827;
-}
-
-#preview-image {
-    display: none;
-    width: 100%;
-    max-height: 280px;
-    object-fit: contain;
-    border-radius: 10px;
-    margin-top: 12px;
-    background: #101827;
-}
-
-.post-info {
-    color: #8ca0b8;
-    font-size: 12px;
-    margin-top: 12px;
-}
-
-.post-author {
-    color: #42a5ff;
-}
-
-.error {
-    color: #ff7777;
-    margin-bottom: 12px;
-}
-
-.empty {
-    text-align: center;
-    color: #8ca0b8;
-    padding: 25px;
-}
-
-.counter {
-    text-align: right;
-    color: #8ca0b8;
-    font-size: 12px;
-    margin-top: 5px;
-}
-
-.refresh-info {
-    color: #71869f;
-    font-size: 12px;
-    text-align: center;
-    margin-bottom: 15px;
-}
-
-.nickname-status {
-    color: #8ca0b8;
-    font-size: 13px;
-    margin-top: 10px;
-}
-
-.like-area {
-    margin-top: 14px;
-    border-top: 1px solid #344761;
-    padding-top: 12px;
-}
-
+.like-area { margin-top: 14px; border-top: 1px solid #344761; padding-top: 12px; }
 .like-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: transparent;
-    border: none;
-    color: #b6c5d8;
-    font-size: 14px;
-    padding: 5px 8px;
-    border-radius: 8px;
+    display: inline-flex; align-items: center; gap: 8px; background: transparent;
+    border: none; color: #b6c5d8; font-size: 14px; padding: 5px 8px; border-radius: 8px;
 }
+.like-button:hover { background: #293c55; }
+.heart { font-size: 24px; color: #aab8ca; }
+.like-button.liked { color: #ff6b81; }
+.like-button.liked .heart { color: #ff405e; }
+.like-count { font-weight: bold; color: white; }
 
-.like-button:hover {
-    background: #293c55;
-}
-
-.like-button:disabled {
-    opacity: 0.6;
-    cursor: wait;
-}
-
-.heart {
-    font-size: 24px;
-    color: #aab8ca;
-    transition: transform 0.15s;
-}
-
-.like-button.liked {
-    color: #ff6b81;
-}
-
-.like-button.liked .heart {
-    color: #ff405e;
-}
-
-.like-button:active .heart {
-    transform: scale(1.3);
-}
-
-.like-count {
-    font-weight: bold;
-    color: white;
-}
-
-footer {
-    text-align: center;
-    margin-top: 30px;
-    padding-bottom: 20px;
-    font-size: 13px;
-}
-
-footer a {
-    color: #71869f;
-    text-decoration: none;
-}
-
-footer a:hover {
-    color: #42a5ff;
-}
+footer { text-align: center; margin-top: 30px; padding-bottom: 20px; font-size: 13px; }
+footer a { color: #71869f; text-decoration: none; }
+footer a:hover { color: #42a5ff; }
 </style>
 </head>
-
 <body>
-
 <div class="container">
 
 <header>
@@ -1055,58 +577,28 @@ footer a:hover {
 
 <div class="panel">
     <h2>👤 Tvoja prezývka</h2>
-    <p class="subtitle">
-        Ostatní návštevníci uvidia túto prezývku pri tvojich príspevkoch aj v chate.
-    </p>
-
+    <p class="subtitle">Ostatní návštevníci uvidia túto prezývku pri tvojich príspevkoch aj v chate.</p>
     <form id="nickname-form">
-        <input
-            type="text"
-            id="nickname-input"
-            maxlength="20"
-            value="{{ nickname }}"
-            placeholder="Zadaj svoju prezývku"
-            required
-        >
-        <button class="nickname-button" type="submit">
-            Uložiť prezývku
-        </button>
+        <input type="text" id="nickname-input" maxlength="20" value="{{ nickname }}" placeholder="Zadaj svoju prezývku" required>
+        <button class="nickname-button" type="submit">Uložiť prezývku</button>
     </form>
-
     <div id="nickname-status" class="nickname-status"></div>
 </div>
 
 <div class="panel">
     <h2>Vytvor príspevok</h2>
-    <p class="subtitle">
-        Napíš text, pridaj fotografiu alebo vytvor anketu.
-    </p>
+    <p class="subtitle">Napíš správu alebo vytvor anketu.</p>
 
-    {% if message %}
-        <div class="error">{{ message }}</div>
-    {% endif %}
+    {% if message %}<div class="error">{{ message }}</div>{% endif %}
 
-    <form method="POST" action="/" enctype="multipart/form-data">
-        <textarea
-            id="post-textarea"
-            name="post"
-            maxlength="500"
-            placeholder="Čo máš na srdci? (alebo otázka k ankete)"
-        ></textarea>
+    <form method="POST" action="/">
+        <textarea id="post-textarea" name="post" maxlength="500" placeholder="Čo máš na srdci? (alebo otázka k ankete)"></textarea>
+        <div class="counter" id="char-counter">0 / 500 znakov</div>
 
-        <div class="counter" id="char-counter">
-            0 / 500 znakov
-        </div>
-
-        <!-- ANKETA -->
-        <button type="button" class="poll-toggle-btn" id="toggle-poll-btn">
-            📊 Pridať anketu
-        </button>
+        <button type="button" class="poll-toggle-btn" id="toggle-poll-btn">📊 Pridať anketu</button>
 
         <div class="poll-creator" id="poll-creator">
-            <p class="subtitle" style="margin-top: 0;">
-                Možnosti hlasovania (2 až 5 možností):
-            </p>
+            <p class="subtitle" style="margin-top: 0;">Možnosti hlasovania (2 až 5 možností):</p>
             <div id="poll-options-container">
                 <div class="poll-option-row">
                     <input type="text" name="poll_options[]" maxlength="80" placeholder="Možnosť 1">
@@ -1115,62 +607,27 @@ footer a:hover {
                     <input type="text" name="poll_options[]" maxlength="80" placeholder="Možnosť 2">
                 </div>
             </div>
-            <button type="button" class="add-option-btn" id="add-option-btn">
-                + Pridať ďalšiu možnosť
-            </button>
+            <button type="button" class="add-option-btn" id="add-option-btn">+ Pridať ďalšiu možnosť</button>
         </div>
 
-        <h3>📸 Pridať fotografiu</h3>
-
-        <input
-            id="photo-input"
-            type="file"
-            name="photo"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-        >
-
-        <img id="preview-image" alt="Náhľad vybraného obrázka">
-
-        <p class="subtitle">
-            JPG, PNG, WEBP alebo animovaný GIF. Maximálne 15 MB.
-        </p>
-
-        <button class="submit-button" type="submit">
-            Pridať príspevok
-        </button>
+        <button class="submit-button" type="submit">Pridať príspevok</button>
     </form>
 </div>
 
 <h2>Najnovšie príspevky</h2>
+<div class="refresh-info">Príspevky sa automaticky aktualizujú každých 10 sekúnd.</div>
+<div id="posts-container">{{ posts_html|safe }}</div>
 
-<div class="refresh-info">
-    Príspevky sa automaticky aktualizujú každých 5 sekúnd.
-</div>
-
-<div id="posts-container">
-    {{ posts_html|safe }}
-</div>
-
-<footer>
-    <a href="/admin">Administrácia</a>
-</footer>
-
+<footer><a href="/admin">Administrácia</a></footer>
 </div>
 
 <script>
-// POCITADLO ZNAKOV
 const textarea = document.getElementById("post-textarea");
 const charCounter = document.getElementById("char-counter");
+textarea.addEventListener("input", () => {
+    charCounter.textContent = `${textarea.value.length} / 500 znakov`;
+});
 
-function updateCounter() {
-    const len = textarea.value.length;
-    charCounter.textContent = `${len} / 500 znakov`;
-}
-
-textarea.addEventListener("input", updateCounter);
-updateCounter();
-
-// TVORBA ANKETY
 const togglePollBtn = document.getElementById("toggle-poll-btn");
 const pollCreator = document.getElementById("poll-creator");
 const pollOptionsContainer = document.getElementById("poll-options-container");
@@ -1203,145 +660,73 @@ addOptionBtn.addEventListener("click", () => {
     removeBtn.textContent = "✕";
     removeBtn.onclick = () => {
         row.remove();
-        updateAddButtonVisibility();
+        addOptionBtn.style.display =
+            pollOptionsContainer.querySelectorAll(".poll-option-row").length >= 5 ? "none" : "inline-block";
     };
 
     row.appendChild(input);
     row.appendChild(removeBtn);
     pollOptionsContainer.appendChild(row);
-    updateAddButtonVisibility();
+    if (count + 1 >= 5) addOptionBtn.style.display = "none";
 });
 
-function updateAddButtonVisibility() {
-    const count = pollOptionsContainer.querySelectorAll(".poll-option-row").length;
-    addOptionBtn.style.display = count >= 5 ? "none" : "inline-block";
-}
-
-// NAHLAD OBRAZKA
-const photoInput = document.getElementById("photo-input");
-const previewImage = document.getElementById("preview-image");
-
-photoInput.addEventListener("change", function() {
-    const file = this.files[0];
-    if (!file) {
-        previewImage.style.display = "none";
-        previewImage.removeAttribute("src");
-        return;
-    }
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        previewImage.src = e.target.result;
-        previewImage.style.display = "block";
-    };
-    reader.readAsDataURL(file);
-});
-
-// AUTOMATICKA AKTUALIZACIA PRISPEVKOV
 async function refreshPosts() {
     try {
         const response = await fetch("/posts", { cache: "no-store" });
         if (!response.ok) return;
-        const html = await response.text();
-        document.getElementById("posts-container").innerHTML = html;
-    } catch (error) {
-        console.log("Chyba pri obnovovaní príspevkov.");
-    }
+        document.getElementById("posts-container").innerHTML = await response.text();
+    } catch (e) {}
 }
+setInterval(refreshPosts, 10000);
 
-setInterval(refreshPosts, 5000);
-
-// HLASOVANIE V ANKETE
 async function votePoll(pollId, optionId, button) {
-    const box = button.closest(".poll-box");
-    const buttons = box.querySelectorAll("button");
+    const buttons = button.closest(".poll-box").querySelectorAll("button");
     buttons.forEach(b => b.disabled = true);
-
     try {
-        const response = await fetch(`/poll/${pollId}/vote/${optionId}`, {
-            method: "POST"
-        });
-        if (response.ok) {
-            await refreshPosts();
-        }
-    } catch (error) {
-        console.log("Chyba pri hlasovaní.");
+        const response = await fetch(`/poll/${pollId}/vote/${optionId}`, { method: "POST" });
+        if (response.ok) await refreshPosts();
     } finally {
         buttons.forEach(b => b.disabled = false);
     }
 }
 
-// LAJKOVANIE
 async function toggleLike(button) {
     if (button.disabled) return;
-
-    const postId = button.dataset.postId;
     button.disabled = true;
-
     try {
-        const response = await fetch("/like/" + postId, {
-            method: "POST"
-        });
-
-        if (!response.ok) {
-            throw new Error("Nepodarilo sa uložiť lajk.");
-        }
-
+        const response = await fetch("/like/" + button.dataset.postId, { method: "POST" });
+        if (!response.ok) return;
         const data = await response.json();
-
         button.classList.toggle("liked", data.liked);
         button.setAttribute("aria-pressed", data.liked ? "true" : "false");
         button.querySelector(".heart").textContent = data.liked ? "♥" : "♡";
         button.querySelector(".like-count").textContent = data.count;
-    } catch (error) {
-        console.log(error);
     } finally {
         button.disabled = false;
     }
 }
 
-// ZMENA PREZYVKY
-document.getElementById("nickname-form").addEventListener(
-    "submit",
-    async function(event) {
-        event.preventDefault();
+document.getElementById("nickname-form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+    const input = document.getElementById("nickname-input");
+    const status = document.getElementById("nickname-status");
+    const nickname = input.value.trim();
+    if (!nickname) return;
 
-        const input = document.getElementById("nickname-input");
-        const status = document.getElementById("nickname-status");
-        const submitBtn = this.querySelector("button");
-        const nickname = input.value.trim();
-
-        if (!nickname) {
-            status.textContent = "Zadaj nejakú prezývku.";
-            return;
-        }
-
-        submitBtn.disabled = true;
-
-        try {
-            const response = await fetch("/nickname", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ nickname: nickname })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                status.textContent = data.error || "Chyba pri ukladaní.";
-                return;
-            }
-
-            status.textContent = "✓ Prezývka bola úspešne uložená.";
-            await refreshPosts();
-        } catch (error) {
-            status.textContent = "Nepodarilo sa uložiť prezývku.";
-        } finally {
-            submitBtn.disabled = false;
-        }
+    const response = await fetch("/nickname", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        status.textContent = data.error || "Chyba pri ukladaní.";
+        return;
     }
-);
+    status.textContent = "✓ Prezývka bola úspešne uložená.";
+    await refreshPosts();
+});
 </script>
-
 </body>
 </html>
 """
@@ -1358,152 +743,50 @@ CHAT_ROOMS_HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chatovacie miestnosti - Moja komunita</title>
-
 <style>
-* {
-    box-sizing: border-box;
-}
-
-body {
-    background: #101827;
-    color: white;
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 20px;
-}
-
-.container {
-    max-width: 650px;
-    margin: auto;
-}
-
-header {
-    text-align: center;
-    padding: 20px 10px;
-}
-
-h1 {
-    color: #42a5ff;
-    font-size: 32px;
-    margin: 0 0 8px 0;
-}
-
-.subtitle {
-    color: #9aabc0;
-    margin: 6px 0;
-}
-
-.nav-tabs {
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    margin-bottom: 22px;
-}
-
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 650px; margin: auto; }
+header { text-align: center; padding: 20px 10px; }
+h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
+.subtitle { color: #9aabc0; margin: 6px 0; }
+.nav-tabs { display: flex; gap: 10px; justify-content: center; margin-bottom: 22px; }
 .nav-tab {
-    flex: 1;
-    text-align: center;
-    padding: 12px;
-    background: #1d2b40;
-    border: 1px solid #344761;
-    border-radius: 10px;
-    color: #b6c5d8;
-    text-decoration: none;
-    font-weight: bold;
-    transition: 0.15s;
+    flex: 1; text-align: center; padding: 12px; background: #1d2b40;
+    border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
+    text-decoration: none; font-weight: bold;
 }
-
-.nav-tab:hover {
-    border-color: #42a5ff;
-    color: white;
-}
-
-.nav-tab.active {
-    background: #2689e8;
-    border-color: #2689e8;
-    color: white;
-}
-
+.nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
 .room-card {
-    display: block;
-    background: #1d2b40;
-    padding: 18px 20px;
-    border-radius: 14px;
-    margin-bottom: 14px;
-    border: 1px solid #344761;
-    text-decoration: none;
-    color: white;
-    transition: 0.15s;
+    display: block; background: #1d2b40; padding: 18px 20px; border-radius: 14px;
+    margin-bottom: 14px; border: 1px solid #344761; text-decoration: none; color: white;
 }
-
-.room-card:hover {
-    border-color: #42a5ff;
-    transform: translateY(-2px);
-}
-
-.room-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-}
-
-.room-title {
-    font-size: 19px;
-    font-weight: bold;
-    color: #42a5ff;
-}
-
+.room-card:hover { border-color: #42a5ff; }
+.room-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.room-title { font-size: 19px; font-weight: bold; color: #42a5ff; }
 .room-badge {
-    background: #101827;
-    border: 1px solid #344761;
-    color: #9aabc0;
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    white-space: nowrap;
+    background: #101827; border: 1px solid #344761; color: #9aabc0;
+    padding: 4px 10px; border-radius: 20px; font-size: 12px; white-space: nowrap;
 }
-
-.room-desc {
-    color: #b6c5d8;
-    font-size: 14px;
-    margin-top: 8px;
-}
-
+.room-desc { color: #b6c5d8; font-size: 14px; margin-top: 8px; }
 .user-info-bar {
-    background: #152133;
-    border: 1px solid #344761;
-    padding: 12px 16px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-    font-size: 14px;
-    color: #9aabc0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    background: #152133; border: 1px solid #344761; padding: 12px 16px;
+    border-radius: 10px; margin-bottom: 20px; font-size: 14px; color: #9aabc0;
+    display: flex; justify-content: space-between; align-items: center;
 }
-
-.user-info-bar a {
-    color: #42a5ff;
-    text-decoration: none;
-    font-size: 13px;
-}
+.user-info-bar a { color: #42a5ff; text-decoration: none; font-size: 13px; }
 </style>
 </head>
-
 <body>
 <div class="container">
-
 <header>
     <h1>MOJA KOMUNITA</h1>
     <p class="subtitle">Vyber si miestnosť a zapoj sa do debaty</p>
 </header>
-
 <nav class="nav-tabs">
     <a href="/" class="nav-tab">📋 Nástenka</a>
     <a href="/chat" class="nav-tab active">💬 Chatovacie miestnosti</a>
 </nav>
-
 <div class="user-info-bar">
     <span>
         Vystupuješ ako: <strong style="color: white;">{{ nickname }}</strong>
@@ -1511,21 +794,17 @@ h1 {
     </span>
     <a href="/">Zmeniť prezývku</a>
 </div>
-
 {% for room in rooms %}
     <a href="/chat/{{ room.id }}" class="room-card">
         <div class="room-header">
             <span class="room-title">{{ room.name }}</span>
             <span class="room-badge">{{ room.message_count }} správ</span>
         </div>
-        {% if room.description %}
-            <div class="room-desc">{{ room.description }}</div>
-        {% endif %}
+        {% if room.description %}<div class="room-desc">{{ room.description }}</div>{% endif %}
     </a>
 {% else %}
     <p class="subtitle" style="text-align: center;">Zatiaľ nie sú vytvorené žiadne miestnosti.</p>
 {% endfor %}
-
 </div>
 </body>
 </html>
@@ -1538,174 +817,51 @@ CHAT_ROOM_DETAIL_HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ room.name }} - Chat</title>
-
 <style>
-* {
-    box-sizing: border-box;
-}
-
+* { box-sizing: border-box; }
 body {
-    background: #101827;
-    color: white;
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 15px;
-    height: 100dvh;
-    display: flex;
-    flex-direction: column;
+    background: #101827; color: white; font-family: Arial, sans-serif;
+    margin: 0; padding: 15px; height: 100dvh; display: flex; flex-direction: column;
 }
-
-.chat-wrapper {
-    max-width: 650px;
-    width: 100%;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
+.chat-wrapper { max-width: 650px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
 .chat-header {
-    background: #1d2b40;
-    padding: 14px 18px;
-    border-radius: 14px;
-    border: 1px solid #344761;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
+    background: #1d2b40; padding: 14px 18px; border-radius: 14px;
+    border: 1px solid #344761; display: flex; justify-content: space-between;
+    align-items: center; gap: 10px; margin-bottom: 12px;
 }
-
-.back-btn {
-    color: #42a5ff;
-    text-decoration: none;
-    font-weight: bold;
-    font-size: 14px;
-    white-space: nowrap;
-}
-
-.room-info {
-    text-align: center;
-}
-
-.room-info h2 {
-    margin: 0;
-    font-size: 18px;
-    color: white;
-}
-
-.room-info small {
-    color: #8ca0b8;
-    font-size: 12px;
-}
-
+.back-btn { color: #42a5ff; text-decoration: none; font-weight: bold; font-size: 14px; }
+.room-info { text-align: center; }
+.room-info h2 { margin: 0; font-size: 18px; color: white; }
+.room-info small { color: #8ca0b8; font-size: 12px; }
 .messages-box {
-    flex: 1;
-    background: #152133;
-    border: 1px solid #344761;
-    border-radius: 14px;
-    padding: 15px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 12px;
+    flex: 1; background: #152133; border: 1px solid #344761; border-radius: 14px;
+    padding: 15px; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 10px; margin-bottom: 12px;
 }
-
 .msg {
-    max-width: 80%;
-    padding: 10px 14px;
-    border-radius: 14px;
-    background: #1d2b40;
-    border: 1px solid #2c3f59;
-    align-self: flex-start;
-    overflow-wrap: anywhere;
+    max-width: 80%; padding: 10px 14px; border-radius: 14px; background: #1d2b40;
+    border: 1px solid #2c3f59; align-self: flex-start; overflow-wrap: anywhere;
 }
-
-.msg.mine {
-    align-self: flex-end;
-    background: #1a4b82;
-    border-color: #2689e8;
-}
-
-.msg-meta {
-    font-size: 11px;
-    color: #8ca0b8;
-    margin-bottom: 4px;
-}
-
-.msg.mine .msg-meta {
-    color: #b8dcff;
-    text-align: right;
-}
-
-.msg-author {
-    font-weight: bold;
-    color: #42a5ff;
-}
-
-.msg.mine .msg-author {
-    color: white;
-}
-
-.msg-text {
-    font-size: 15px;
-    line-height: 1.4;
-    white-space: pre-wrap;
-}
-
-.chat-form {
-    display: flex;
-    gap: 10px;
-}
-
+.msg.mine { align-self: flex-end; background: #1a4b82; border-color: #2689e8; }
+.msg-meta { font-size: 11px; color: #8ca0b8; margin-bottom: 4px; }
+.msg.mine .msg-meta { color: #b8dcff; text-align: right; }
+.msg-author { font-weight: bold; color: #42a5ff; }
+.msg.mine .msg-author { color: white; }
+.msg-text { font-size: 15px; line-height: 1.4; white-space: pre-wrap; }
+.chat-form { display: flex; gap: 10px; }
 .chat-input {
-    flex: 1;
-    padding: 13px 15px;
-    background: #1d2b40;
-    border: 1px solid #344761;
-    border-radius: 12px;
-    color: white;
-    font-size: 15px;
+    flex: 1; padding: 13px 15px; background: #1d2b40; border: 1px solid #344761;
+    border-radius: 12px; color: white; font-size: 15px;
 }
-
-.chat-input:focus {
-    outline: none;
-    border-color: #42a5ff;
-}
-
 .send-btn {
-    padding: 13px 20px;
-    background: #2689e8;
-    border: none;
-    border-radius: 12px;
-    color: white;
-    font-weight: bold;
-    font-size: 15px;
-    cursor: pointer;
+    padding: 13px 20px; background: #2689e8; border: none; border-radius: 12px;
+    color: white; font-weight: bold; font-size: 15px; cursor: pointer;
 }
-
-.send-btn:hover {
-    background: #1472cb;
-}
-
-.send-btn:disabled {
-    opacity: 0.6;
-    cursor: wait;
-}
-
-.empty-chat {
-    text-align: center;
-    color: #71869f;
-    margin: auto;
-    font-size: 14px;
-}
+.empty-chat { text-align: center; color: #71869f; margin: auto; font-size: 14px; }
 </style>
 </head>
-
 <body>
 <div class="chat-wrapper">
-
 <div class="chat-header">
     <a href="/chat" class="back-btn">← Miestnosti</a>
     <div class="room-info">
@@ -1720,18 +876,9 @@ body {
 </div>
 
 <form class="chat-form" id="chat-form">
-    <input
-        type="text"
-        id="chat-input"
-        class="chat-input"
-        maxlength="400"
-        placeholder="Napíš správu do miestnosti..."
-        autocomplete="off"
-        required
-    >
+    <input type="text" id="chat-input" class="chat-input" maxlength="400" placeholder="Napíš správu do miestnosti..." autocomplete="off" required>
     <button type="submit" class="send-btn" id="send-btn">Odoslať</button>
 </form>
-
 </div>
 
 <script>
@@ -1740,7 +887,6 @@ const messagesBox = document.getElementById("messages-box");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
-
 let lastRenderedJson = "";
 
 function escapeHtml(text) {
@@ -1753,15 +899,12 @@ async function loadMessages(forceScroll = false) {
     try {
         const response = await fetch(`/chat/${roomId}/messages`, { cache: "no-store" });
         if (!response.ok) return;
-
         const messages = await response.json();
         const currentJson = JSON.stringify(messages);
-
         if (currentJson === lastRenderedJson) return;
         lastRenderedJson = currentJson;
 
-        const isNearBottom =
-            messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 90;
+        const isNearBottom = messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 90;
 
         if (messages.length === 0) {
             messagesBox.innerHTML = '<div class="empty-chat">Zatiaľ tu nie sú žiadne správy. Napíš prvú!</div>';
@@ -1780,16 +923,13 @@ async function loadMessages(forceScroll = false) {
         if (forceScroll || isNearBottom) {
             messagesBox.scrollTop = messagesBox.scrollHeight;
         }
-    } catch (e) {
-        console.log("Chyba pri načítaní chatu.");
-    }
+    } catch (e) {}
 }
 
 chatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const text = chatInput.value.trim();
     if (!text) return;
-
     sendBtn.disabled = true;
     try {
         const response = await fetch(`/chat/${roomId}/send`, {
@@ -1808,9 +948,8 @@ chatForm.addEventListener("submit", async (e) => {
 });
 
 loadMessages(true);
-setInterval(() => loadMessages(false), 2000);
+setInterval(() => loadMessages(false), 4000);
 </script>
-
 </body>
 </html>
 """
@@ -1849,7 +988,6 @@ def register():
                         "SELECT id FROM accounts WHERE LOWER(username) = LOWER(?)",
                         (username,)
                     ).fetchone()
-
                     if existing:
                         error = "Toto používateľské meno je už obsadené."
                     else:
@@ -1860,8 +998,7 @@ def register():
                         )
                         account_id = cursor.lastrowid
 
-                old_visitor_id = g.cookie_visitor_id
-                migrate_visitor_to_account(old_visitor_id, account_id, username)
+                migrate_visitor_to_account(g.cookie_visitor_id, account_id, username)
                 session["account_id"] = account_id
                 return redirect("/")
 
@@ -1900,8 +1037,7 @@ def login():
                 error = "Nesprávne používateľské meno alebo heslo."
             else:
                 account_id, real_username = acc[0], acc[1]
-                old_visitor_id = g.cookie_visitor_id
-                migrate_visitor_to_account(old_visitor_id, account_id, real_username)
+                migrate_visitor_to_account(g.cookie_visitor_id, account_id, real_username)
                 session["account_id"] = account_id
                 return redirect("/")
 
@@ -1936,38 +1072,25 @@ def get_posts():
                 p.id,
                 p.message,
                 p.created_at,
-                p.image,
                 COALESCE(u.nickname, 'Anonymný používateľ') AS nickname,
-                (
-                    SELECT COUNT(*)
-                    FROM likes l
-                    WHERE l.post_id = p.id
-                ) AS like_count,
+                (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS like_count,
                 EXISTS (
-                    SELECT 1
-                    FROM likes l
-                    WHERE l.post_id = p.id
-                    AND l.visitor_id = ?
+                    SELECT 1 FROM likes l
+                    WHERE l.post_id = p.id AND l.visitor_id = ?
                 ) AS liked
             FROM posts p
-            LEFT JOIN users u
-                ON p.visitor_id = u.visitor_id
+            LEFT JOIN users u ON p.visitor_id = u.visitor_id
             ORDER BY p.id DESC
         """, (visitor_id,)).fetchall()
 
         posts = []
         for row in rows:
             post_id = row[0]
-
-            poll_row = conn.execute(
-                "SELECT id FROM polls WHERE post_id = ?",
-                (post_id,)
-            ).fetchone()
-
+            poll_row = conn.execute("SELECT id FROM polls WHERE post_id = ?", (post_id,)).fetchone()
             poll_data = None
+
             if poll_row:
                 poll_id = poll_row[0]
-
                 user_vote_row = conn.execute(
                     "SELECT option_id FROM poll_votes WHERE poll_id = ? AND visitor_id = ?",
                     (poll_id, visitor_id)
@@ -1978,27 +1101,22 @@ def get_posts():
                     SELECT
                         po.id,
                         po.option_text,
-                        (
-                            SELECT COUNT(*)
-                            FROM poll_votes pv
-                            WHERE pv.option_id = po.id
-                        ) AS votes
+                        (SELECT COUNT(*) FROM poll_votes pv WHERE pv.option_id = po.id) AS votes
                     FROM poll_options po
                     WHERE po.poll_id = ?
                     ORDER BY po.id ASC
                 """, (poll_id,)).fetchall()
 
                 total_votes = sum(opt[2] for opt in option_rows)
-
-                options = []
-                for opt in option_rows:
-                    percent = round((opt[2] / total_votes) * 100) if total_votes > 0 else 0
-                    options.append({
+                options = [
+                    {
                         "id": opt[0],
                         "text": opt[1],
                         "votes": opt[2],
-                        "percent": percent
-                    })
+                        "percent": round((opt[2] / total_votes) * 100) if total_votes > 0 else 0
+                    }
+                    for opt in option_rows
+                ]
 
                 poll_data = {
                     "id": poll_id,
@@ -2011,10 +1129,9 @@ def get_posts():
                 "id": row[0],
                 "message": row[1],
                 "created_at": row[2],
-                "image": row[3],
-                "nickname": row[4],
-                "like_count": row[5],
-                "liked": row[6],
+                "nickname": row[3],
+                "like_count": row[4],
+                "liked": row[5],
                 "poll": poll_data
             })
 
@@ -2031,11 +1148,8 @@ def home():
 
     if request.method == "POST":
         post = request.form.get("post", "").strip()
-        photo = request.files.get("photo")
         raw_options = request.form.getlist("poll_options[]")
         poll_options = [opt.strip()[:80] for opt in raw_options if opt.strip()]
-
-        image_name = None
 
         if len(post) > 500:
             message = "Text je príliš dlhý."
@@ -2043,93 +1157,21 @@ def home():
             message = "Anketa musí obsahovať aspoň 2 možnosti."
         elif len(poll_options) > 5:
             message = "Anketa môže mať maximálne 5 možností."
-        elif not post and (not photo or not photo.filename) and not poll_options:
-            message = "Napíš text, vyber fotografiu alebo vytvor anketu."
-        elif photo and photo.filename:
-            try:
-                if "." not in photo.filename:
-                    raise ValueError()
-
-                extension = photo.filename.rsplit(".", 1)[1].lower()
-
-                allowed_formats = {
-                    "jpg": "JPEG",
-                    "jpeg": "JPEG",
-                    "png": "PNG",
-                    "webp": "WEBP",
-                    "gif": "GIF"
-                }
-
-                if extension not in allowed_formats:
-                    raise ValueError()
-
-                img = Image.open(photo.stream)
-
-                if img.format != allowed_formats[extension]:
-                    raise ValueError()
-
-                if img.width * img.height > 20000000:
-                    raise ValueError()
-
-                if img.format == "GIF":
-                    frame_count = getattr(img, "n_frames", 1)
-
-                    if frame_count > 150:
-                        raise ValueError()
-
-                    if img.width * img.height * frame_count > 100000000:
-                        raise ValueError()
-
-                    for frame in range(frame_count):
-                        img.seek(frame)
-                        img.load()
-
-                    photo.stream.seek(0)
-                    image_name = f"{uuid.uuid4()}.gif"
-                    image_path = os.path.join(UPLOAD_FOLDER, image_name)
-
-                    with open(image_path, "wb") as file:
-                        file.write(photo.stream.read())
-
-                else:
-                    img.verify()
-                    photo.stream.seek(0)
-
-                    img = Image.open(photo.stream)
-                    img = ImageOps.exif_transpose(img)
-
-                    if img.mode not in ("RGB", "RGBA"):
-                        img = img.convert("RGB")
-
-                    img.thumbnail((1600, 1600))
-
-                    image_name = f"{uuid.uuid4()}.webp"
-                    image_path = os.path.join(UPLOAD_FOLDER, image_name)
-
-                    img.save(image_path, "WEBP", quality=82)
-
-            except (UnidentifiedImageError, OSError, ValueError, EOFError):
-                message = "Fotografia alebo GIF je neplatný, príliš veľký alebo nepodporovaný."
+        elif not post and not poll_options:
+            message = "Napíš text alebo vytvor anketu."
 
         if not message:
             created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
-
             with get_db() as conn:
                 cursor = conn.execute("""
-                    INSERT INTO posts
-                    (message, created_at, image, visitor_id)
-                    VALUES (?, ?, ?, ?)
-                """, (post, created_at, image_name, g.visitor_id))
-
+                    INSERT INTO posts (message, created_at, visitor_id)
+                    VALUES (?, ?, ?)
+                """, (post, created_at, g.visitor_id))
                 post_id = cursor.lastrowid
 
                 if poll_options:
-                    poll_cursor = conn.execute(
-                        "INSERT INTO polls (post_id) VALUES (?)",
-                        (post_id,)
-                    )
+                    poll_cursor = conn.execute("INSERT INTO polls (post_id) VALUES (?)", (post_id,))
                     poll_id = poll_cursor.lastrowid
-
                     for opt_text in poll_options:
                         conn.execute(
                             "INSERT INTO poll_options (poll_id, option_text) VALUES (?, ?)",
@@ -2140,7 +1182,6 @@ def home():
 
     posts = get_posts()
     posts_html = render_template_string(POSTS_HTML, posts=posts)
-
     return render_template_string(
         HTML,
         posts_html=posts_html,
@@ -2162,49 +1203,27 @@ def chat_rooms():
                 r.id,
                 r.name,
                 r.description,
-                (
-                    SELECT COUNT(*)
-                    FROM chat_messages m
-                    WHERE m.room_id = r.id
-                ) AS message_count
+                (SELECT COUNT(*) FROM chat_messages m WHERE m.room_id = r.id) AS message_count
             FROM chat_rooms r
             ORDER BY r.id ASC
         """).fetchall()
 
     rooms = [
-        {
-            "id": r[0],
-            "name": r[1],
-            "description": r[2],
-            "message_count": r[3]
-        }
+        {"id": r[0], "name": r[1], "description": r[2], "message_count": r[3]}
         for r in rows
     ]
-
-    return render_template_string(
-        CHAT_ROOMS_HTML,
-        rooms=rooms,
-        nickname=get_nickname(),
-        account=g.account
-    )
+    return render_template_string(CHAT_ROOMS_HTML, rooms=rooms, nickname=get_nickname(), account=g.account)
 
 
 @app.route("/chat/<int:room_id>")
 def chat_room_detail(room_id):
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT id, name, description FROM chat_rooms WHERE id = ?",
-            (room_id,)
-        ).fetchone()
-
+        row = conn.execute("SELECT id, name, description FROM chat_rooms WHERE id = ?", (room_id,)).fetchone()
     if not row:
         return redirect("/chat")
-
-    room = {"id": row[0], "name": row[1], "description": row[2]}
-
     return render_template_string(
         CHAT_ROOM_DETAIL_HTML,
-        room=room,
+        room={"id": row[0], "name": row[1], "description": row[2]},
         nickname=get_nickname()
     )
 
@@ -2212,7 +1231,6 @@ def chat_room_detail(room_id):
 @app.route("/chat/<int:room_id>/messages")
 def chat_room_messages(room_id):
     visitor_id = g.visitor_id
-
     with get_db() as conn:
         rows = conn.execute("""
             SELECT * FROM (
@@ -2223,8 +1241,7 @@ def chat_room_messages(room_id):
                     m.visitor_id,
                     COALESCE(u.nickname, 'Anonymný používateľ') AS nickname
                 FROM chat_messages m
-                LEFT JOIN users u
-                    ON m.visitor_id = u.visitor_id
+                LEFT JOIN users u ON m.visitor_id = u.visitor_id
                 WHERE m.room_id = ?
                 ORDER BY m.id DESC
                 LIMIT 100
@@ -2232,7 +1249,7 @@ def chat_room_messages(room_id):
             ORDER BY id ASC
         """, (room_id,)).fetchall()
 
-    messages = [
+    return jsonify([
         {
             "id": r[0],
             "message": r[1],
@@ -2241,25 +1258,18 @@ def chat_room_messages(room_id):
             "nickname": r[4]
         }
         for r in rows
-    ]
-
-    return jsonify(messages)
+    ])
 
 
 @app.route("/chat/<int:room_id>/send", methods=["POST"])
 def chat_room_send(room_id):
     data = request.get_json(silent=True) or {}
     text = str(data.get("message", "")).strip()
-
     if not text or len(text) > 400:
         return jsonify({"error": "Neplatná správa."}), 400
 
     with get_db() as conn:
-        room = conn.execute(
-            "SELECT id FROM chat_rooms WHERE id = ?",
-            (room_id,)
-        ).fetchone()
-
+        room = conn.execute("SELECT id FROM chat_rooms WHERE id = ?", (room_id,)).fetchone()
         if not room:
             return jsonify({"error": "Miestnosť neexistuje."}), 404
 
@@ -2273,19 +1283,16 @@ def chat_room_send(room_id):
 
 
 # ==========================================
-# HLASOVANIE V ANKETE
+# HLASOVANIE, PREZYVKA, PRISPEVKY, LAJKY
 # ==========================================
 
 @app.route("/poll/<int:poll_id>/vote/<int:option_id>", methods=["POST"])
 def vote_poll(poll_id, option_id):
-    visitor_id = g.visitor_id
-
     with get_db() as conn:
         option = conn.execute(
             "SELECT id FROM poll_options WHERE id = ? AND poll_id = ?",
             (option_id, poll_id)
         ).fetchone()
-
         if not option:
             return jsonify({"error": "Neplatná možnosť ankety."}), 404
 
@@ -2294,99 +1301,52 @@ def vote_poll(poll_id, option_id):
             VALUES (?, ?, ?)
             ON CONFLICT(poll_id, visitor_id)
             DO UPDATE SET option_id = excluded.option_id
-        """, (poll_id, option_id, visitor_id))
+        """, (poll_id, option_id, g.visitor_id))
 
     return jsonify({"success": True})
 
-
-# ==========================================
-# ZMENA PREZÝVKY
-# ==========================================
 
 @app.route("/nickname", methods=["POST"])
 def change_nickname():
     data = request.get_json(silent=True) or {}
     nickname = str(data.get("nickname", "")).strip()
-
-    if not nickname:
-        return jsonify({"error": "Prezývka nemôže byť prázdna."}), 400
-
-    if len(nickname) > 20:
-        return jsonify({"error": "Prezývka môže mať maximálne 20 znakov."}), 400
+    if not nickname or len(nickname) > 20:
+        return jsonify({"error": "Prezývka musí mať 1 až 20 znakov."}), 400
 
     with get_db() as conn:
-        conn.execute("""
-            UPDATE users
-            SET nickname = ?
-            WHERE visitor_id = ?
-        """, (nickname, g.visitor_id))
+        conn.execute("UPDATE users SET nickname = ? WHERE visitor_id = ?", (nickname, g.visitor_id))
 
     return jsonify({"success": True, "nickname": nickname})
 
 
-# ==========================================
-# AUTOMATICKA AKTUALIZACIA
-# ==========================================
-
 @app.route("/posts")
 def posts_update():
-    posts = get_posts()
-    return render_template_string(POSTS_HTML, posts=posts)
+    return render_template_string(POSTS_HTML, posts=get_posts())
 
-
-# ==========================================
-# LAJKOVANIE
-# ==========================================
 
 @app.route("/like/<int:post_id>", methods=["POST"])
 def toggle_like(post_id):
     visitor_id = g.visitor_id
-
     with get_db() as conn:
-        post = conn.execute(
-            "SELECT id FROM posts WHERE id = ?",
-            (post_id,)
-        ).fetchone()
-
+        post = conn.execute("SELECT id FROM posts WHERE id = ?", (post_id,)).fetchone()
         if not post:
             return jsonify({"error": "Príspevok neexistuje."}), 404
 
-        existing_like = conn.execute("""
-            SELECT id
-            FROM likes
-            WHERE post_id = ? AND visitor_id = ?
-        """, (post_id, visitor_id)).fetchone()
+        existing_like = conn.execute(
+            "SELECT id FROM likes WHERE post_id = ? AND visitor_id = ?",
+            (post_id, visitor_id)
+        ).fetchone()
 
         if existing_like:
-            conn.execute("""
-                DELETE FROM likes
-                WHERE post_id = ? AND visitor_id = ?
-            """, (post_id, visitor_id))
+            conn.execute("DELETE FROM likes WHERE id = ?", (existing_like[0],))
             liked = False
         else:
-            conn.execute("""
-                INSERT OR IGNORE INTO likes
-                (post_id, visitor_id)
-                VALUES (?, ?)
-            """, (post_id, visitor_id))
+            conn.execute("INSERT OR IGNORE INTO likes (post_id, visitor_id) VALUES (?, ?)", (post_id, visitor_id))
             liked = True
 
-        count = conn.execute("""
-            SELECT COUNT(*)
-            FROM likes
-            WHERE post_id = ?
-        """, (post_id,)).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM likes WHERE post_id = ?", (post_id,)).fetchone()[0]
 
     return jsonify({"liked": liked, "count": count})
-
-
-# ==========================================
-# CHYBA PRI VELKOM SUBORE
-# ==========================================
-
-@app.errorhandler(413)
-def too_large(error):
-    return "Súbor je príliš veľký. Maximálna veľkosť je 15 MB.", 413
 
 
 # ==========================================
@@ -2400,126 +1360,39 @@ ADMIN_HTML = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Administrácia</title>
-
 <style>
-* {
-    box-sizing: border-box;
-}
-
-body {
-    background: #101827;
-    color: white;
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 20px;
-}
-
-.container {
-    max-width: 750px;
-    margin: auto;
-}
-
-.panel, .post {
-    background: #1d2b40;
-    padding: 20px;
-    border-radius: 12px;
-    margin-bottom: 15px;
-}
-
-h1 {
-    color: #42a5ff;
-}
-
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 750px; margin: auto; }
+.panel, .post { background: #1d2b40; padding: 20px; border-radius: 12px; margin-bottom: 15px; }
+h1 { color: #42a5ff; }
 input {
-    width: 100%;
-    padding: 13px;
-    margin: 8px 0;
-    background: #101827;
-    color: white;
-    border: 1px solid #344761;
-    border-radius: 8px;
+    width: 100%; padding: 13px; margin: 8px 0; background: #101827;
+    color: white; border: 1px solid #344761; border-radius: 8px;
 }
-
-button {
-    cursor: pointer;
-    border: none;
-    border-radius: 8px;
-    padding: 12px;
-    color: white;
-}
-
-.login-button, .create-button {
-    width: 100%;
-    background: #2689e8;
-}
-
-.delete-button {
-    background: #d93650;
-    margin-top: 8px;
-}
-
-.logout-button {
-    background: #475b73;
-}
-
-.post-image {
-    width: 100%;
-    max-height: 300px;
-    object-fit: contain;
-    margin-top: 10px;
-}
-
-.error {
-    color: #ff7777;
-}
-
-.info {
-    color: #9aabc0;
-}
-
-.back-link {
-    display: inline-block;
-    margin-bottom: 15px;
-    color: #42a5ff;
-    text-decoration: none;
-}
-
-.admin-poll {
-    background: #152133;
-    padding: 10px 14px;
-    border-radius: 8px;
-    margin-top: 10px;
-    font-size: 14px;
-}
-
+button { cursor: pointer; border: none; border-radius: 8px; padding: 12px; color: white; }
+.login-button, .create-button { width: 100%; background: #2689e8; }
+.delete-button { background: #d93650; margin-top: 8px; }
+.logout-button { background: #475b73; }
+.error { color: #ff7777; }
+.info { color: #9aabc0; }
+.back-link { display: inline-block; margin-bottom: 15px; color: #42a5ff; text-decoration: none; }
+.admin-poll { background: #152133; padding: 10px 14px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
 .room-admin-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: #152133;
-    padding: 12px 15px;
-    border-radius: 8px;
-    margin-top: 10px;
-    gap: 10px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: #152133; padding: 12px 15px; border-radius: 8px; margin-top: 10px; gap: 10px;
 }
 </style>
 </head>
-
 <body>
-
 <div class="container">
-
 <a class="back-link" href="/">← Späť na nástenku</a>
 <h1>🔐 Administrácia</h1>
 
 {% if not logged_in %}
     <div class="panel">
         <h2>Prihlásenie administrátora</h2>
-
-        {% if error %}
-            <p class="error">{{ error }}</p>
-        {% endif %}
-
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
         <form method="POST" action="/admin">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="text" name="username" placeholder="Používateľské meno" required>
@@ -2531,17 +1404,14 @@ button {
     <div class="panel">
         <h2>Vitaj v administrácii!</h2>
         <p class="info">Tu môžeš spravovať chatovacie miestnosti aj príspevky komunity.</p>
-
         <form method="POST" action="/admin/logout">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button class="logout-button" type="submit">Odhlásiť sa</button>
         </form>
     </div>
 
-    <!-- SPRAVA CHATOVACICH MIESTNOSTI -->
     <div class="panel">
         <h2>💬 Chatovacie miestnosti</h2>
-
         <form method="POST" action="/admin/rooms/create">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="text" name="name" maxlength="40" placeholder="Názov novej miestnosti (napr. 🎵 Hudba)" required>
@@ -2555,11 +1425,7 @@ button {
                     <strong>{{ room[1] }}</strong><br>
                     <small class="info">{{ room[2] }}</small>
                 </div>
-                <form
-                    method="POST"
-                    action="/admin/rooms/delete/{{ room[0] }}"
-                    onsubmit="return confirm('Vymazať miestnosť aj so všetkými správami v nej?');"
-                >
+                <form method="POST" action="/admin/rooms/delete/{{ room[0] }}" onsubmit="return confirm('Vymazať miestnosť aj so všetkými správami v nej?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button class="delete-button" type="submit">🗑 Vymazať</button>
                 </form>
@@ -2568,20 +1434,9 @@ button {
     </div>
 
     <h2>Príspevky komunity</h2>
-
     {% for post in posts %}
         <div class="post">
-            {% if post.message %}
-                <p>{{ post.message }}</p>
-            {% endif %}
-
-            {% if post.image %}
-                <img
-                    class="post-image"
-                    src="{{ url_for('static', filename='uploads/' + post.image) }}"
-                >
-            {% endif %}
-
+            {% if post.message %}<p>{{ post.message }}</p>{% endif %}
             {% if post.poll %}
                 <div class="admin-poll">
                     <strong>📊 Anketa ({{ post.poll.total_votes }} hlasov):</strong>
@@ -2592,18 +1447,12 @@ button {
                     </ul>
                 </div>
             {% endif %}
-
             <p class="info">
                 Autor: {{ post.nickname }}<br>
                 Dátum: {{ post.created_at }}<br>
                 Lajky: {{ post.like_count }}
             </p>
-
-            <form
-                method="POST"
-                action="/admin/delete/{{ post.id }}"
-                onsubmit="return confirm('Naozaj chceš vymazať tento príspevok?');"
-            >
+            <form method="POST" action="/admin/delete/{{ post.id }}" onsubmit="return confirm('Naozaj chceš vymazať tento príspevok?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="delete-button" type="submit">🗑 Vymazať príspevok</button>
             </form>
@@ -2612,9 +1461,7 @@ button {
         <p class="info">Zatiaľ tu nie sú žiadne príspevky.</p>
     {% endfor %}
 {% endif %}
-
 </div>
-
 </body>
 </html>
 """
@@ -2633,40 +1480,27 @@ def valid_admin_csrf():
     )
 
 
-# ==========================================
-# PRIHLASENIE ADMINISTRATORA
-# ==========================================
-
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
     error = ""
-
     if request.method == "POST":
         if not valid_admin_csrf():
             error = "Neplatná požiadavka. Obnov stránku."
         else:
             username = request.form.get("username", "")
             password = request.form.get("password", "")
-
-            if (
-                username == ADMIN_USERNAME
-                and check_password_hash(ADMIN_PASSWORD_HASH, password)
-            ):
+            if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
                 session.clear()
                 session["is_admin"] = True
                 return redirect("/admin")
-            else:
-                error = "Nesprávne meno alebo heslo."
+            error = "Nesprávne meno alebo heslo."
 
     logged_in = session.get("is_admin", False)
     posts = get_posts() if logged_in else []
     rooms = []
-
     if logged_in:
         with get_db() as conn:
-            rooms = conn.execute(
-                "SELECT id, name, description FROM chat_rooms ORDER BY id ASC"
-            ).fetchall()
+            rooms = conn.execute("SELECT id, name, description FROM chat_rooms ORDER BY id ASC").fetchall()
 
     return render_template_string(
         ADMIN_HTML,
@@ -2682,20 +1516,13 @@ def admin():
 def admin_create_room():
     if not session.get("is_admin"):
         return redirect("/admin")
-
     if not valid_admin_csrf():
         return "Neplatná požiadavka.", 400
-
     name = request.form.get("name", "").strip()[:40]
     description = request.form.get("description", "").strip()[:100]
-
     if name:
         with get_db() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO chat_rooms (name, description) VALUES (?, ?)",
-                (name, description)
-            )
-
+            conn.execute("INSERT OR IGNORE INTO chat_rooms (name, description) VALUES (?, ?)", (name, description))
     return redirect("/admin")
 
 
@@ -2703,73 +1530,40 @@ def admin_create_room():
 def admin_delete_room(room_id):
     if not session.get("is_admin"):
         return redirect("/admin")
-
     if not valid_admin_csrf():
         return "Neplatná požiadavka.", 400
-
     with get_db() as conn:
         conn.execute("DELETE FROM chat_messages WHERE room_id = ?", (room_id,))
         conn.execute("DELETE FROM chat_rooms WHERE id = ?", (room_id,))
-
     return redirect("/admin")
 
-
-# ==========================================
-# ODHLASENIE ADMINISTRATORA
-# ==========================================
 
 @app.route("/admin/logout", methods=["POST"])
 def admin_logout():
     if not session.get("is_admin"):
         return redirect("/admin")
-
     if not valid_admin_csrf():
         return "Neplatná požiadavka.", 400
-
     session.clear()
     return redirect("/admin")
 
-
-# ==========================================
-# VYMAZANIE PRISPEVKU VRATANE ANKETY
-# ==========================================
 
 @app.route("/admin/delete/<int:post_id>", methods=["POST"])
 def admin_delete_post(post_id):
     if not session.get("is_admin"):
         return redirect("/admin")
-
     if not valid_admin_csrf():
         return "Neplatná požiadavka.", 400
 
     with get_db() as conn:
-        post = conn.execute(
-            "SELECT image FROM posts WHERE id = ?",
-            (post_id,)
-        ).fetchone()
-
-        if post:
-            image_name = post[0]
-
-            poll = conn.execute(
-                "SELECT id FROM polls WHERE post_id = ?",
-                (post_id,)
-            ).fetchone()
-
-            if poll:
-                poll_id = poll[0]
-                conn.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll_id,))
-                conn.execute("DELETE FROM poll_options WHERE poll_id = ?", (poll_id,))
-                conn.execute("DELETE FROM polls WHERE id = ?", (poll_id,))
-
-            conn.execute("DELETE FROM likes WHERE post_id = ?", (post_id,))
-            conn.execute("DELETE FROM posts WHERE id = ?", (post_id,))
-
-            if image_name:
-                safe_name = os.path.basename(image_name)
-                image_path = os.path.join(UPLOAD_FOLDER, safe_name)
-                if os.path.isfile(image_path):
-                    os.remove(image_path)
+        poll = conn.execute("SELECT id FROM polls WHERE post_id = ?", (post_id,)).fetchone()
+        if poll:
+            poll_id = poll[0]
+            conn.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll_id,))
+            conn.execute("DELETE FROM poll_options WHERE poll_id = ?", (poll_id,))
+            conn.execute("DELETE FROM polls WHERE id = ?", (poll_id,))
+        conn.execute("DELETE FROM likes WHERE post_id = ?", (post_id,))
+        conn.execute("DELETE FROM posts WHERE id = ?", (post_id,))
 
     return redirect("/admin")
 
