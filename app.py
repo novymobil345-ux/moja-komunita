@@ -4,11 +4,11 @@ from flask import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-import sqlite3
 import os
 import re
 import secrets
 from datetime import datetime
+import psycopg
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -33,9 +33,17 @@ ADMIN_PASSWORD_HASH = os.environ.get(
     "scrypt:32768:8:1$IQmPlVdN4QAOMulj$4c9c02f9b3b8f02afc8f149091d0e050e376061af8f84ee901dc0753ea07a38d315f19ed0b4ad4277b6f3d9efba71d7b6fe727ec090a48fe583c60595f87e791"
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "komunita.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _DB_READY = False
+
+
+def open_db():
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "Chýba premenná prostredia DATABASE_URL (connection string z Neonu)."
+        )
+    conn = psycopg.connect(DATABASE_URL)
+    return conn
 
 
 def ensure_schema(conn):
@@ -43,128 +51,131 @@ def ensure_schema(conn):
     if _DB_READY:
         return
 
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA foreign_keys = ON;")
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS posts (
+                id SERIAL PRIMARY KEY,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                visitor_id TEXT
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            visitor_id TEXT
-        )
-    """)
+        cur.execute("""
+            ALTER TABLE posts
+            ADD COLUMN IF NOT EXISTS visitor_id TEXT
+        """)
 
-    columns = [
-        row[1] for row in
-        conn.execute("PRAGMA table_info(posts)").fetchall()
-    ]
-    if "visitor_id" not in columns:
-        conn.execute("ALTER TABLE posts ADD COLUMN visitor_id TEXT")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS likes (
+                id SERIAL PRIMARY KEY,
+                post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+                visitor_id TEXT NOT NULL,
+                UNIQUE(post_id, visitor_id)
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS likes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_id INTEGER NOT NULL,
-            visitor_id TEXT NOT NULL,
-            UNIQUE(post_id, visitor_id)
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                visitor_id TEXT PRIMARY KEY,
+                nickname TEXT NOT NULL
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            visitor_id TEXT PRIMARY KEY,
-            nickname TEXT NOT NULL
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS polls (
+                id SERIAL PRIMARY KEY,
+                post_id INTEGER NOT NULL UNIQUE REFERENCES posts(id) ON DELETE CASCADE
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS polls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_id INTEGER NOT NULL UNIQUE
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS poll_options (
+                id SERIAL PRIMARY KEY,
+                poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                option_text TEXT NOT NULL
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS poll_options (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            poll_id INTEGER NOT NULL,
-            option_text TEXT NOT NULL
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS poll_votes (
+                id SERIAL PRIMARY KEY,
+                poll_id INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+                option_id INTEGER NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+                visitor_id TEXT NOT NULL,
+                UNIQUE(poll_id, visitor_id)
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS poll_votes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            poll_id INTEGER NOT NULL,
-            option_id INTEGER NOT NULL,
-            visitor_id TEXT NOT NULL,
-            UNIQUE(poll_id, visitor_id)
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chat_rooms (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT ''
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_rooms (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT NOT NULL DEFAULT ''
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id SERIAL PRIMARY KEY,
+                room_id INTEGER NOT NULL REFERENCES chat_rooms(id) ON DELETE CASCADE,
+                visitor_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_id INTEGER NOT NULL,
-            visitor_id TEXT NOT NULL,
-            message TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS direct_messages (
+                id SERIAL PRIMARY KEY,
+                sender_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                recipient_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0
+            )
+        """)
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS direct_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_account_id INTEGER NOT NULL,
-            recipient_account_id INTEGER NOT NULL,
-            message TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            is_read INTEGER NOT NULL DEFAULT 0
-        )
-    """)
+        cur.execute("SELECT COUNT(*) FROM chat_rooms")
+        room_count = cur.fetchone()[0]
+        if room_count == 0:
+            default_rooms = [
+                ("💬 Všeobecný pokec", "Voľná debata o všetkom možnom"),
+                ("🎮 Hry a zábava", "Pokec o hrách, filmoch a seriáloch"),
+                ("🌙 Nočná zmena", "Pre tých, ktorí ešte nespia")
+            ]
+            cur.executemany(
+                "INSERT INTO chat_rooms (name, description) VALUES (%s, %s)",
+                default_rooms
+            )
 
-    room_count = conn.execute("SELECT COUNT(*) FROM chat_rooms").fetchone()[0]
-    if room_count == 0:
-        default_rooms = [
-            ("💬 Všeobecný pokec", "Voľná debata o všetkom možnom"),
-            ("🎮 Hry a zábava", "Pokec o hrách, filmoch a seriáloch"),
-            ("🌙 Nočná zmena", "Pre tých, ktorí ešte nespia")
-        ]
-        conn.executemany(
-            "INSERT INTO chat_rooms (name, description) VALUES (?, ?)",
-            default_rooms
-        )
-
+    conn.commit()
     _DB_READY = True
 
 
 def get_db():
-    conn = sqlite3.connect(DB_FILE, timeout=15)
+    conn = open_db()
     ensure_schema(conn)
     return conn
 
 
 def init_db():
-    with get_db():
-        pass
+    if not DATABASE_URL:
+        return
+    try:
+        with get_db() as conn:
+            pass
+    except Exception as exc:
+        app.logger.warning("Inicializácia DB pri štarte sa odložila: %s", exc)
 
 
 init_db()
@@ -180,10 +191,12 @@ def get_current_account():
         return None
 
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT id, username FROM accounts WHERE id = ?",
-            (account_id,)
-        ).fetchone()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username FROM accounts WHERE id = %s",
+                (account_id,)
+            )
+            row = cur.fetchone()
 
     if not row:
         session.pop("account_id", None)
@@ -196,10 +209,12 @@ def get_unread_dm_count(account_id):
     if not account_id:
         return 0
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM direct_messages WHERE recipient_account_id = ? AND is_read = 0",
-            (account_id,)
-        ).fetchone()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM direct_messages WHERE recipient_account_id = %s AND is_read = 0",
+                (account_id,)
+            )
+            row = cur.fetchone()
     return row[0] if row else 0
 
 
@@ -207,58 +222,66 @@ def migrate_visitor_to_account(old_visitor_id, account_id, username):
     account_key = f"acc:{account_id}"
 
     with get_db() as conn:
-        old_user = conn.execute(
-            "SELECT nickname FROM users WHERE visitor_id = ?",
-            (old_visitor_id,)
-        ).fetchone()
-
-        preferred_nickname = username
-        if old_user and old_user[0] and old_user[0] != "Anonymný používateľ":
-            preferred_nickname = old_user[0][:20]
-
-        conn.execute("""
-            INSERT INTO users (visitor_id, nickname)
-            VALUES (?, ?)
-            ON CONFLICT(visitor_id) DO UPDATE SET nickname = excluded.nickname
-        """, (account_key, preferred_nickname))
-
-        if old_visitor_id and old_visitor_id != account_key:
-            conn.execute(
-                "UPDATE posts SET visitor_id = ? WHERE visitor_id = ?",
-                (account_key, old_visitor_id)
-            )
-            conn.execute(
-                "UPDATE chat_messages SET visitor_id = ? WHERE visitor_id = ?",
-                (account_key, old_visitor_id)
-            )
-
-            old_likes = conn.execute(
-                "SELECT id, post_id FROM likes WHERE visitor_id = ?",
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT nickname FROM users WHERE visitor_id = %s",
                 (old_visitor_id,)
-            ).fetchall()
-            for like_id, post_id in old_likes:
-                exists = conn.execute(
-                    "SELECT 1 FROM likes WHERE post_id = ? AND visitor_id = ?",
-                    (post_id, account_key)
-                ).fetchone()
-                if exists:
-                    conn.execute("DELETE FROM likes WHERE id = ?", (like_id,))
-                else:
-                    conn.execute("UPDATE likes SET visitor_id = ? WHERE id = ?", (account_key, like_id))
+            )
+            old_user = cur.fetchone()
 
-            old_votes = conn.execute(
-                "SELECT id, poll_id FROM poll_votes WHERE visitor_id = ?",
-                (old_visitor_id,)
-            ).fetchall()
-            for vote_id, poll_id in old_votes:
-                exists = conn.execute(
-                    "SELECT 1 FROM poll_votes WHERE poll_id = ? AND visitor_id = ?",
-                    (poll_id, account_key)
-                ).fetchone()
-                if exists:
-                    conn.execute("DELETE FROM poll_votes WHERE id = ?", (vote_id,))
-                else:
-                    conn.execute("UPDATE poll_votes SET visitor_id = ? WHERE id = ?", (account_key, vote_id))
+            preferred_nickname = username
+            if old_user and old_user[0] and old_user[0] != "Anonymný používateľ":
+                preferred_nickname = old_user[0][:20]
+
+            cur.execute("""
+                INSERT INTO users (visitor_id, nickname)
+                VALUES (%s, %s)
+                ON CONFLICT(visitor_id) DO UPDATE SET nickname = EXCLUDED.nickname
+            """, (account_key, preferred_nickname))
+
+            if old_visitor_id and old_visitor_id != account_key:
+                cur.execute(
+                    "UPDATE posts SET visitor_id = %s WHERE visitor_id = %s",
+                    (account_key, old_visitor_id)
+                )
+                cur.execute(
+                    "UPDATE chat_messages SET visitor_id = %s WHERE visitor_id = %s",
+                    (account_key, old_visitor_id)
+                )
+
+                cur.execute(
+                    "SELECT id, post_id FROM likes WHERE visitor_id = %s",
+                    (old_visitor_id,)
+                )
+                old_likes = cur.fetchall()
+                for like_id, post_id in old_likes:
+                    cur.execute(
+                        "SELECT 1 FROM likes WHERE post_id = %s AND visitor_id = %s",
+                        (post_id, account_key)
+                    )
+                    exists = cur.fetchone()
+                    if exists:
+                        cur.execute("DELETE FROM likes WHERE id = %s", (like_id,))
+                    else:
+                        cur.execute("UPDATE likes SET visitor_id = %s WHERE id = %s", (account_key, like_id))
+
+                cur.execute(
+                    "SELECT id, poll_id FROM poll_votes WHERE visitor_id = %s",
+                    (old_visitor_id,)
+                )
+                old_votes = cur.fetchall()
+                for vote_id, poll_id in old_votes:
+                    cur.execute(
+                        "SELECT 1 FROM poll_votes WHERE poll_id = %s AND visitor_id = %s",
+                        (poll_id, account_key)
+                    )
+                    exists = cur.fetchone()
+                    if exists:
+                        cur.execute("DELETE FROM poll_votes WHERE id = %s", (vote_id,))
+                    else:
+                        cur.execute("UPDATE poll_votes SET visitor_id = %s WHERE id = %s", (account_key, vote_id))
+
+        conn.commit()
 
     return account_key
 
@@ -284,11 +307,13 @@ def identify_visitor():
         default_nick = "Anonymný používateľ"
 
     with get_db() as conn:
-        conn.execute("""
-            INSERT OR IGNORE INTO users
-            (visitor_id, nickname)
-            VALUES (?, ?)
-        """, (g.visitor_id, default_nick))
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (visitor_id, nickname)
+                VALUES (%s, %s)
+                ON CONFLICT (visitor_id) DO NOTHING
+            """, (g.visitor_id, default_nick))
+        conn.commit()
 
 
 @app.after_request
@@ -307,11 +332,13 @@ def save_visitor_cookie(response):
 
 def get_nickname():
     with get_db() as conn:
-        result = conn.execute("""
-            SELECT nickname
-            FROM users
-            WHERE visitor_id = ?
-        """, (g.visitor_id,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT nickname
+                FROM users
+                WHERE visitor_id = %s
+            """, (g.visitor_id,))
+            result = cur.fetchone()
 
     if result:
         return result[0]
@@ -600,6 +627,7 @@ footer a:hover { color: #42a5ff; }
         <span>Prihlásený ako: <strong style="color: #42a5ff;">@{{ account.username }}</strong></span>
         <div class="account-actions">
             <form method="POST" action="/logout" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button type="submit" class="logout-inline-btn">Odhlásiť sa</button>
             </form>
         </div>
@@ -1309,23 +1337,27 @@ def register():
                 error = "Heslá sa nezhodujú."
             else:
                 with get_db() as conn:
-                    existing = conn.execute(
-                        "SELECT id FROM accounts WHERE LOWER(username) = LOWER(?)",
-                        (username,)
-                    ).fetchone()
-                    if existing:
-                        error = "Toto používateľské meno je už obsadené."
-                    else:
-                        created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
-                        cursor = conn.execute(
-                            "INSERT INTO accounts (username, password_hash, created_at) VALUES (?, ?, ?)",
-                            (username, generate_password_hash(password), created_at)
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT id FROM accounts WHERE LOWER(username) = LOWER(%s)",
+                            (username,)
                         )
-                        account_id = cursor.lastrowid
+                        existing = cur.fetchone()
+                        if existing:
+                            error = "Toto používateľské meno je už obsadené."
+                        else:
+                            created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
+                            cur.execute(
+                                "INSERT INTO accounts (username, password_hash, created_at) VALUES (%s, %s, %s) RETURNING id",
+                                (username, generate_password_hash(password), created_at)
+                            )
+                            account_id = cur.fetchone()[0]
+                    conn.commit()
 
-                migrate_visitor_to_account(g.cookie_visitor_id, account_id, username)
-                session["account_id"] = account_id
-                return redirect("/")
+                if not error:
+                    migrate_visitor_to_account(g.cookie_visitor_id, account_id, username)
+                    session["account_id"] = account_id
+                    return redirect("/")
 
     return render_template_string(
         AUTH_HTML,
@@ -1353,10 +1385,12 @@ def login():
             username_val = username
 
             with get_db() as conn:
-                acc = conn.execute(
-                    "SELECT id, username, password_hash FROM accounts WHERE LOWER(username) = LOWER(?)",
-                    (username,)
-                ).fetchone()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, username, password_hash FROM accounts WHERE LOWER(username) = LOWER(%s)",
+                        (username,)
+                    )
+                    acc = cur.fetchone()
 
             if not acc or not check_password_hash(acc[2], password):
                 error = "Nesprávne používateľské meno alebo heslo."
@@ -1380,6 +1414,8 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
+    if not valid_auth_csrf():
+        return redirect("/")
     session.pop("account_id", None)
     return redirect("/")
 
@@ -1400,79 +1436,84 @@ def get_posts():
     visitor_id = g.visitor_id
 
     with get_db() as conn:
-        rows = conn.execute("""
-            SELECT
-                p.id,
-                p.message,
-                p.created_at,
-                p.visitor_id,
-                COALESCE(u.nickname, 'Anonymný používateľ') AS nickname,
-                (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS like_count,
-                EXISTS (
-                    SELECT 1 FROM likes l
-                    WHERE l.post_id = p.id AND l.visitor_id = ?
-                ) AS liked
-            FROM posts p
-            LEFT JOIN users u ON p.visitor_id = u.visitor_id
-            ORDER BY p.id DESC
-        """, (visitor_id,)).fetchall()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    p.id,
+                    p.message,
+                    p.created_at,
+                    p.visitor_id,
+                    COALESCE(u.nickname, 'Anonymný používateľ') AS nickname,
+                    (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id) AS like_count,
+                    EXISTS (
+                        SELECT 1 FROM likes l
+                        WHERE l.post_id = p.id AND l.visitor_id = %s
+                    ) AS liked
+                FROM posts p
+                LEFT JOIN users u ON p.visitor_id = u.visitor_id
+                ORDER BY p.id DESC
+            """, (visitor_id,))
+            rows = cur.fetchall()
 
-        posts = []
-        for row in rows:
-            post_id = row[0]
-            author_acc_id = parse_account_id_from_visitor(row[3])
-            if g.account and author_acc_id == g.account["id"]:
-                author_acc_id = None
+            posts = []
+            for row in rows:
+                post_id = row[0]
+                author_acc_id = parse_account_id_from_visitor(row[3])
+                if g.account and author_acc_id == g.account["id"]:
+                    author_acc_id = None
 
-            poll_row = conn.execute("SELECT id FROM polls WHERE post_id = ?", (post_id,)).fetchone()
-            poll_data = None
+                cur.execute("SELECT id FROM polls WHERE post_id = %s", (post_id,))
+                poll_row = cur.fetchone()
+                poll_data = None
 
-            if poll_row:
-                poll_id = poll_row[0]
-                user_vote_row = conn.execute(
-                    "SELECT option_id FROM poll_votes WHERE poll_id = ? AND visitor_id = ?",
-                    (poll_id, visitor_id)
-                ).fetchone()
-                user_vote = user_vote_row[0] if user_vote_row else None
+                if poll_row:
+                    poll_id = poll_row[0]
+                    cur.execute(
+                        "SELECT option_id FROM poll_votes WHERE poll_id = %s AND visitor_id = %s",
+                        (poll_id, visitor_id)
+                    )
+                    user_vote_row = cur.fetchone()
+                    user_vote = user_vote_row[0] if user_vote_row else None
 
-                option_rows = conn.execute("""
-                    SELECT
-                        po.id,
-                        po.option_text,
-                        (SELECT COUNT(*) FROM poll_votes pv WHERE pv.option_id = po.id) AS votes
-                    FROM poll_options po
-                    WHERE po.poll_id = ?
-                    ORDER BY po.id ASC
-                """, (poll_id,)).fetchall()
+                    cur.execute("""
+                        SELECT
+                            po.id,
+                            po.option_text,
+                            (SELECT COUNT(*) FROM poll_votes pv WHERE pv.option_id = po.id) AS votes
+                        FROM poll_options po
+                        WHERE po.poll_id = %s
+                        ORDER BY po.id ASC
+                    """, (poll_id,))
+                    option_rows = cur.fetchall()
 
-                total_votes = sum(opt[2] for opt in option_rows)
-                options = [
-                    {
-                        "id": opt[0],
-                        "text": opt[1],
-                        "votes": opt[2],
-                        "percent": round((opt[2] / total_votes) * 100) if total_votes > 0 else 0
+                    total_votes = sum(opt[2] for opt in option_rows)
+                    options = [
+                        {
+                            "id": opt[0],
+                            "text": opt[1],
+                            "votes": opt[2],
+                            "percent": round((opt[2] / total_votes) * 100) if total_votes > 0 else 0
+                        }
+                        for opt in option_rows
+                    ]
+
+                    poll_data = {
+                        "id": poll_id,
+                        "options": options,
+                        "total_votes": total_votes,
+                        "user_vote": user_vote
                     }
-                    for opt in option_rows
-                ]
 
-                poll_data = {
-                    "id": poll_id,
-                    "options": options,
-                    "total_votes": total_votes,
-                    "user_vote": user_vote
-                }
-
-            posts.append({
-                "id": row[0],
-                "message": row[1],
-                "created_at": row[2],
-                "nickname": row[4],
-                "author_account_id": author_acc_id,
-                "like_count": row[5],
-                "liked": row[6],
-                "poll": poll_data
-            })
+                posts.append({
+                    "id": row[0],
+                    "message": row[1],
+                    "created_at": row[2],
+                    "nickname": row[4],
+                    "author_account_id": author_acc_id,
+                    "like_count": row[5],
+                    "liked": bool(row[6]),
+                    "poll": poll_data
+                })
 
     return posts
 
@@ -1502,20 +1543,26 @@ def home():
         if not message:
             created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
             with get_db() as conn:
-                cursor = conn.execute("""
-                    INSERT INTO posts (message, created_at, visitor_id)
-                    VALUES (?, ?, ?)
-                """, (post, created_at, g.visitor_id))
-                post_id = cursor.lastrowid
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO posts (message, created_at, visitor_id)
+                        VALUES (%s, %s, %s)
+                        RETURNING id
+                    """, (post, created_at, g.visitor_id))
+                    post_id = cur.fetchone()[0]
 
-                if poll_options:
-                    poll_cursor = conn.execute("INSERT INTO polls (post_id) VALUES (?)", (post_id,))
-                    poll_id = poll_cursor.lastrowid
-                    for opt_text in poll_options:
-                        conn.execute(
-                            "INSERT INTO poll_options (poll_id, option_text) VALUES (?, ?)",
-                            (poll_id, opt_text)
+                    if poll_options:
+                        cur.execute(
+                            "INSERT INTO polls (post_id) VALUES (%s) RETURNING id",
+                            (post_id,)
                         )
+                        poll_id = cur.fetchone()[0]
+                        for opt_text in poll_options:
+                            cur.execute(
+                                "INSERT INTO poll_options (poll_id, option_text) VALUES (%s, %s)",
+                                (poll_id, opt_text)
+                            )
+                conn.commit()
 
             return redirect("/")
 
@@ -1529,7 +1576,8 @@ def home():
         message=message,
         nickname=get_nickname(),
         account=g.account,
-        unread_dm_count=unread_dm_count
+        unread_dm_count=unread_dm_count,
+        csrf_token=get_auth_csrf()
     )
 
 
@@ -1540,15 +1588,17 @@ def home():
 @app.route("/chat")
 def chat_rooms():
     with get_db() as conn:
-        rows = conn.execute("""
-            SELECT
-                r.id,
-                r.name,
-                r.description,
-                (SELECT COUNT(*) FROM chat_messages m WHERE m.room_id = r.id) AS message_count
-            FROM chat_rooms r
-            ORDER BY r.id ASC
-        """).fetchall()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    r.id,
+                    r.name,
+                    r.description,
+                    (SELECT COUNT(*) FROM chat_messages m WHERE m.room_id = r.id) AS message_count
+                FROM chat_rooms r
+                ORDER BY r.id ASC
+            """)
+            rows = cur.fetchall()
 
     rooms = [
         {"id": r[0], "name": r[1], "description": r[2], "message_count": r[3]}
@@ -1567,7 +1617,9 @@ def chat_rooms():
 @app.route("/chat/<int:room_id>")
 def chat_room_detail(room_id):
     with get_db() as conn:
-        row = conn.execute("SELECT id, name, description FROM chat_rooms WHERE id = ?", (room_id,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, description FROM chat_rooms WHERE id = %s", (room_id,))
+            row = cur.fetchone()
     if not row:
         return redirect("/chat")
     return render_template_string(
@@ -1581,22 +1633,24 @@ def chat_room_detail(room_id):
 def chat_room_messages(room_id):
     visitor_id = g.visitor_id
     with get_db() as conn:
-        rows = conn.execute("""
-            SELECT * FROM (
-                SELECT
-                    m.id,
-                    m.message,
-                    m.created_at,
-                    m.visitor_id,
-                    COALESCE(u.nickname, 'Anonymný používateľ') AS nickname
-                FROM chat_messages m
-                LEFT JOIN users u ON m.visitor_id = u.visitor_id
-                WHERE m.room_id = ?
-                ORDER BY m.id DESC
-                LIMIT 100
-            ) sub
-            ORDER BY id ASC
-        """, (room_id,)).fetchall()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM (
+                    SELECT
+                        m.id,
+                        m.message,
+                        m.created_at,
+                        m.visitor_id,
+                        COALESCE(u.nickname, 'Anonymný používateľ') AS nickname
+                    FROM chat_messages m
+                    LEFT JOIN users u ON m.visitor_id = u.visitor_id
+                    WHERE m.room_id = %s
+                    ORDER BY m.id DESC
+                    LIMIT 100
+                ) sub
+                ORDER BY id ASC
+            """, (room_id,))
+            rows = cur.fetchall()
 
     return jsonify([
         {
@@ -1618,15 +1672,18 @@ def chat_room_send(room_id):
         return jsonify({"error": "Neplatná správa."}), 400
 
     with get_db() as conn:
-        room = conn.execute("SELECT id FROM chat_rooms WHERE id = ?", (room_id,)).fetchone()
-        if not room:
-            return jsonify({"error": "Miestnosť neexistuje."}), 404
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM chat_rooms WHERE id = %s", (room_id,))
+            room = cur.fetchone()
+            if not room:
+                return jsonify({"error": "Miestnosť neexistuje."}), 404
 
-        created_at = datetime.now().strftime("%H:%M")
-        conn.execute("""
-            INSERT INTO chat_messages (room_id, visitor_id, message, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (room_id, g.visitor_id, text, created_at))
+            created_at = datetime.now().strftime("%H:%M")
+            cur.execute("""
+                INSERT INTO chat_messages (room_id, visitor_id, message, created_at)
+                VALUES (%s, %s, %s, %s)
+            """, (room_id, g.visitor_id, text, created_at))
+        conn.commit()
 
     return jsonify({"success": True})
 
@@ -1640,58 +1697,64 @@ def build_conversations_list(my_account_id):
         return []
 
     with get_db() as conn:
-        partner_rows = conn.execute("""
-            SELECT DISTINCT
-                CASE
-                    WHEN sender_account_id = ? THEN recipient_account_id
-                    ELSE sender_account_id
-                END AS partner_id
-            FROM direct_messages
-            WHERE sender_account_id = ? OR recipient_account_id = ?
-        """, (my_account_id, my_account_id, my_account_id)).fetchall()
-
-        conversations = []
-        for (partner_id,) in partner_rows:
-            if not partner_id or partner_id == my_account_id:
-                continue
-
-            acc_row = conn.execute(
-                "SELECT id, username FROM accounts WHERE id = ?",
-                (partner_id,)
-            ).fetchone()
-            if not acc_row:
-                continue
-
-            nick_row = conn.execute(
-                "SELECT nickname FROM users WHERE visitor_id = ?",
-                (f"acc:{partner_id}",)
-            ).fetchone()
-            partner_nickname = nick_row[0] if (nick_row and nick_row[0]) else acc_row[1]
-
-            last_msg = conn.execute("""
-                SELECT message, created_at, id
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT
+                    CASE
+                        WHEN sender_account_id = %s THEN recipient_account_id
+                        ELSE sender_account_id
+                    END AS partner_id
                 FROM direct_messages
-                WHERE (sender_account_id = ? AND recipient_account_id = ?)
-                   OR (sender_account_id = ? AND recipient_account_id = ?)
-                ORDER BY id DESC
-                LIMIT 1
-            """, (my_account_id, partner_id, partner_id, my_account_id)).fetchone()
+                WHERE sender_account_id = %s OR recipient_account_id = %s
+            """, (my_account_id, my_account_id, my_account_id))
+            partner_rows = cur.fetchall()
 
-            unread = conn.execute("""
-                SELECT COUNT(*)
-                FROM direct_messages
-                WHERE sender_account_id = ? AND recipient_account_id = ? AND is_read = 0
-            """, (partner_id, my_account_id)).fetchone()[0]
+            conversations = []
+            for (partner_id,) in partner_rows:
+                if not partner_id or partner_id == my_account_id:
+                    continue
 
-            conversations.append({
-                "partner_id": partner_id,
-                "partner_username": acc_row[1],
-                "partner_nickname": partner_nickname,
-                "last_message": last_msg[0] if last_msg else "",
-                "last_time": last_msg[1] if last_msg else "",
-                "last_id": last_msg[2] if last_msg else 0,
-                "unread": unread
-            })
+                cur.execute(
+                    "SELECT id, username FROM accounts WHERE id = %s",
+                    (partner_id,)
+                )
+                acc_row = cur.fetchone()
+                if not acc_row:
+                    continue
+
+                cur.execute(
+                    "SELECT nickname FROM users WHERE visitor_id = %s",
+                    (f"acc:{partner_id}",)
+                )
+                nick_row = cur.fetchone()
+                partner_nickname = nick_row[0] if (nick_row and nick_row[0]) else acc_row[1]
+
+                cur.execute("""
+                    SELECT message, created_at, id
+                    FROM direct_messages
+                    WHERE (sender_account_id = %s AND recipient_account_id = %s)
+                       OR (sender_account_id = %s AND recipient_account_id = %s)
+                    ORDER BY id DESC
+                    LIMIT 1
+                """, (my_account_id, partner_id, partner_id, my_account_id))
+                last_msg = cur.fetchone()
+
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM direct_messages
+                    WHERE sender_account_id = %s AND recipient_account_id = %s AND is_read = 0
+                """, (partner_id, my_account_id))
+                unread = cur.fetchone()[0]
+
+                conversations.append({
+                    "partner_id": partner_id,
+                    "partner_username": acc_row[1],
+                    "partner_nickname": partner_nickname,
+                    "last_message": last_msg[0] if last_msg else "",
+                    "last_time": last_msg[1] if last_msg else "",
+                    "last_id": last_msg[2] if last_msg else 0,
+                    "unread": unread
+                })
 
         conversations.sort(key=lambda c: c["last_id"], reverse=True)
         return conversations
@@ -1725,23 +1788,27 @@ def dm_start():
     if not query:
         return redirect("/messages?error=Zadaj+pou%C5%BE%C3%ADvate%C4%BEsk%C3%A9+meno+alebo+prez%C3%BDvku.")
 
+    acc = None
     with get_db() as conn:
-        acc = conn.execute(
-            "SELECT id FROM accounts WHERE LOWER(username) = LOWER(?)",
-            (query,)
-        ).fetchone()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM accounts WHERE LOWER(username) = LOWER(%s)",
+                (query,)
+            )
+            acc = cur.fetchone()
 
-        if not acc:
-            user_match = conn.execute("""
-                SELECT visitor_id
-                FROM users
-                WHERE visitor_id LIKE 'acc:%' AND LOWER(nickname) = LOWER(?)
-                LIMIT 1
-            """, (query,)).fetchone()
-            if user_match:
-                acc_id = parse_account_id_from_visitor(user_match[0])
-                if acc_id:
-                    acc = (acc_id,)
+            if not acc:
+                cur.execute("""
+                    SELECT visitor_id
+                    FROM users
+                    WHERE visitor_id LIKE 'acc:%%' AND LOWER(nickname) = LOWER(%s)
+                    LIMIT 1
+                """, (query,))
+                user_match = cur.fetchone()
+                if user_match:
+                    acc_id = parse_account_id_from_visitor(user_match[0])
+                    if acc_id:
+                        acc = (acc_id,)
 
     if not acc:
         return redirect("/messages?error=Pou%C5%BE%C3%ADvate%C4%BE+s+t%C3%BDmto+menom+alebo+prez%C3%BDvkou+sa+nena%C5%A1iel.")
@@ -1760,24 +1827,28 @@ def dm_thread(partner_id):
         return redirect("/messages")
 
     with get_db() as conn:
-        acc_row = conn.execute(
-            "SELECT id, username FROM accounts WHERE id = ?",
-            (partner_id,)
-        ).fetchone()
-        if not acc_row:
-            return redirect("/messages?error=Pou%C5%BE%C3%ADvate%C4%BE+neexistuje.")
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username FROM accounts WHERE id = %s",
+                (partner_id,)
+            )
+            acc_row = cur.fetchone()
+            if not acc_row:
+                return redirect("/messages?error=Pou%C5%BE%C3%ADvate%C4%BE+neexistuje.")
 
-        nick_row = conn.execute(
-            "SELECT nickname FROM users WHERE visitor_id = ?",
-            (f"acc:{partner_id}",)
-        ).fetchone()
-        partner_nickname = nick_row[0] if (nick_row and nick_row[0]) else acc_row[1]
+            cur.execute(
+                "SELECT nickname FROM users WHERE visitor_id = %s",
+                (f"acc:{partner_id}",)
+            )
+            nick_row = cur.fetchone()
+            partner_nickname = nick_row[0] if (nick_row and nick_row[0]) else acc_row[1]
 
-        conn.execute("""
-            UPDATE direct_messages
-            SET is_read = 1
-            WHERE sender_account_id = ? AND recipient_account_id = ? AND is_read = 0
-        """, (partner_id, g.account["id"]))
+            cur.execute("""
+                UPDATE direct_messages
+                SET is_read = 1
+                WHERE sender_account_id = %s AND recipient_account_id = %s AND is_read = 0
+            """, (partner_id, g.account["id"]))
+        conn.commit()
 
     return render_template_string(
         DM_THREAD_HTML,
@@ -1792,23 +1863,26 @@ def dm_thread_data(partner_id):
 
     my_id = g.account["id"]
     with get_db() as conn:
-        conn.execute("""
-            UPDATE direct_messages
-            SET is_read = 1
-            WHERE sender_account_id = ? AND recipient_account_id = ? AND is_read = 0
-        """, (partner_id, my_id))
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE direct_messages
+                SET is_read = 1
+                WHERE sender_account_id = %s AND recipient_account_id = %s AND is_read = 0
+            """, (partner_id, my_id))
 
-        rows = conn.execute("""
-            SELECT * FROM (
-                SELECT id, sender_account_id, message, created_at
-                FROM direct_messages
-                WHERE (sender_account_id = ? AND recipient_account_id = ?)
-                   OR (sender_account_id = ? AND recipient_account_id = ?)
-                ORDER BY id DESC
-                LIMIT 100
-            ) sub
-            ORDER BY id ASC
-        """, (my_id, partner_id, partner_id, my_id)).fetchall()
+            cur.execute("""
+                SELECT * FROM (
+                    SELECT id, sender_account_id, message, created_at
+                    FROM direct_messages
+                    WHERE (sender_account_id = %s AND recipient_account_id = %s)
+                       OR (sender_account_id = %s AND recipient_account_id = %s)
+                    ORDER BY id DESC
+                    LIMIT 100
+                ) sub
+                ORDER BY id ASC
+            """, (my_id, partner_id, partner_id, my_id))
+            rows = cur.fetchall()
+        conn.commit()
 
     return jsonify([
         {
@@ -1834,15 +1908,18 @@ def dm_thread_send(partner_id):
         return jsonify({"error": "Neplatná správa."}), 400
 
     with get_db() as conn:
-        partner = conn.execute("SELECT id FROM accounts WHERE id = ?", (partner_id,)).fetchone()
-        if not partner:
-            return jsonify({"error": "Používateľ neexistuje."}), 404
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM accounts WHERE id = %s", (partner_id,))
+            partner = cur.fetchone()
+            if not partner:
+                return jsonify({"error": "Používateľ neexistuje."}), 404
 
-        created_at = datetime.now().strftime("%d.%m. %H:%M")
-        conn.execute("""
-            INSERT INTO direct_messages (sender_account_id, recipient_account_id, message, created_at, is_read)
-            VALUES (?, ?, ?, ?, 0)
-        """, (g.account["id"], partner_id, text, created_at))
+            created_at = datetime.now().strftime("%d.%m. %H:%M")
+            cur.execute("""
+                INSERT INTO direct_messages (sender_account_id, recipient_account_id, message, created_at, is_read)
+                VALUES (%s, %s, %s, %s, 0)
+            """, (g.account["id"], partner_id, text, created_at))
+        conn.commit()
 
     return jsonify({"success": True})
 
@@ -1854,19 +1931,22 @@ def dm_thread_send(partner_id):
 @app.route("/poll/<int:poll_id>/vote/<int:option_id>", methods=["POST"])
 def vote_poll(poll_id, option_id):
     with get_db() as conn:
-        option = conn.execute(
-            "SELECT id FROM poll_options WHERE id = ? AND poll_id = ?",
-            (option_id, poll_id)
-        ).fetchone()
-        if not option:
-            return jsonify({"error": "Neplatná možnosť ankety."}), 404
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM poll_options WHERE id = %s AND poll_id = %s",
+                (option_id, poll_id)
+            )
+            option = cur.fetchone()
+            if not option:
+                return jsonify({"error": "Neplatná možnosť ankety."}), 404
 
-        conn.execute("""
-            INSERT INTO poll_votes (poll_id, option_id, visitor_id)
-            VALUES (?, ?, ?)
-            ON CONFLICT(poll_id, visitor_id)
-            DO UPDATE SET option_id = excluded.option_id
-        """, (poll_id, option_id, g.visitor_id))
+            cur.execute("""
+                INSERT INTO poll_votes (poll_id, option_id, visitor_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT(poll_id, visitor_id)
+                DO UPDATE SET option_id = EXCLUDED.option_id
+            """, (poll_id, option_id, g.visitor_id))
+        conn.commit()
 
     return jsonify({"success": True})
 
@@ -1879,7 +1959,12 @@ def change_nickname():
         return jsonify({"error": "Prezývka musí mať 1 až 20 znakov."}), 400
 
     with get_db() as conn:
-        conn.execute("UPDATE users SET nickname = ? WHERE visitor_id = ?", (nickname, g.visitor_id))
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET nickname = %s WHERE visitor_id = %s",
+                (nickname, g.visitor_id)
+            )
+        conn.commit()
 
     return jsonify({"success": True, "nickname": nickname})
 
@@ -1893,23 +1978,31 @@ def posts_update():
 def toggle_like(post_id):
     visitor_id = g.visitor_id
     with get_db() as conn:
-        post = conn.execute("SELECT id FROM posts WHERE id = ?", (post_id,)).fetchone()
-        if not post:
-            return jsonify({"error": "Príspevok neexistuje."}), 404
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM posts WHERE id = %s", (post_id,))
+            post = cur.fetchone()
+            if not post:
+                return jsonify({"error": "Príspevok neexistuje."}), 404
 
-        existing_like = conn.execute(
-            "SELECT id FROM likes WHERE post_id = ? AND visitor_id = ?",
-            (post_id, visitor_id)
-        ).fetchone()
+            cur.execute(
+                "SELECT id FROM likes WHERE post_id = %s AND visitor_id = %s",
+                (post_id, visitor_id)
+            )
+            existing_like = cur.fetchone()
 
-        if existing_like:
-            conn.execute("DELETE FROM likes WHERE id = ?", (existing_like[0],))
-            liked = False
-        else:
-            conn.execute("INSERT OR IGNORE INTO likes (post_id, visitor_id) VALUES (?, ?)", (post_id, visitor_id))
-            liked = True
+            if existing_like:
+                cur.execute("DELETE FROM likes WHERE id = %s", (existing_like[0],))
+                liked = False
+            else:
+                cur.execute(
+                    "INSERT INTO likes (post_id, visitor_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (post_id, visitor_id)
+                )
+                liked = True
 
-        count = conn.execute("SELECT COUNT(*) FROM likes WHERE post_id = ?", (post_id,)).fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM likes WHERE post_id = %s", (post_id,))
+            count = cur.fetchone()[0]
+        conn.commit()
 
     return jsonify({"liked": liked, "count": count})
 
@@ -2065,7 +2158,9 @@ def admin():
     rooms = []
     if logged_in:
         with get_db() as conn:
-            rooms = conn.execute("SELECT id, name, description FROM chat_rooms ORDER BY id ASC").fetchall()
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, description FROM chat_rooms ORDER BY id ASC")
+                rooms = cur.fetchall()
 
     return render_template_string(
         ADMIN_HTML,
@@ -2087,7 +2182,12 @@ def admin_create_room():
     description = request.form.get("description", "").strip()[:100]
     if name:
         with get_db() as conn:
-            conn.execute("INSERT OR IGNORE INTO chat_rooms (name, description) VALUES (?, ?)", (name, description))
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO chat_rooms (name, description) VALUES (%s, %s) ON CONFLICT (name) DO NOTHING",
+                    (name, description)
+                )
+            conn.commit()
     return redirect("/admin")
 
 
@@ -2098,8 +2198,10 @@ def admin_delete_room(room_id):
     if not valid_admin_csrf():
         return "Neplatná požiadavka.", 400
     with get_db() as conn:
-        conn.execute("DELETE FROM chat_messages WHERE room_id = ?", (room_id,))
-        conn.execute("DELETE FROM chat_rooms WHERE id = ?", (room_id,))
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM chat_messages WHERE room_id = %s", (room_id,))
+            cur.execute("DELETE FROM chat_rooms WHERE id = %s", (room_id,))
+        conn.commit()
     return redirect("/admin")
 
 
@@ -2121,17 +2223,20 @@ def admin_delete_post(post_id):
         return "Neplatná požiadavka.", 400
 
     with get_db() as conn:
-        poll = conn.execute("SELECT id FROM polls WHERE post_id = ?", (post_id,)).fetchone()
-        if poll:
-            poll_id = poll[0]
-            conn.execute("DELETE FROM poll_votes WHERE poll_id = ?", (poll_id,))
-            conn.execute("DELETE FROM poll_options WHERE poll_id = ?", (poll_id,))
-            conn.execute("DELETE FROM polls WHERE id = ?", (poll_id,))
-        conn.execute("DELETE FROM likes WHERE post_id = ?", (post_id,))
-        conn.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM polls WHERE post_id = %s", (post_id,))
+            poll = cur.fetchone()
+            if poll:
+                poll_id = poll[0]
+                cur.execute("DELETE FROM poll_votes WHERE poll_id = %s", (poll_id,))
+                cur.execute("DELETE FROM poll_options WHERE poll_id = %s", (poll_id,))
+                cur.execute("DELETE FROM polls WHERE id = %s", (poll_id,))
+            cur.execute("DELETE FROM likes WHERE post_id = %s", (post_id,))
+            cur.execute("DELETE FROM posts WHERE id = %s", (post_id,))
+        conn.commit()
 
     return redirect("/admin")
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")))
