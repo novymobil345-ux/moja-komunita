@@ -42,8 +42,7 @@ def open_db():
         raise RuntimeError(
             "Chýba premenná prostredia DATABASE_URL (connection string z Neonu)."
         )
-    conn = psycopg.connect(DATABASE_URL)
-    return conn
+    return psycopg.connect(DATABASE_URL)
 
 
 def ensure_schema(conn):
@@ -81,6 +80,16 @@ def ensure_schema(conn):
                 post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
                 visitor_id TEXT NOT NULL,
                 UNIQUE(post_id, visitor_id)
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS comments (
+                id SERIAL PRIMARY KEY,
+                post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+                visitor_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
 
@@ -172,7 +181,7 @@ def init_db():
     if not DATABASE_URL:
         return
     try:
-        with get_db() as conn:
+        with get_db():
             pass
     except Exception as exc:
         app.logger.warning("Inicializácia DB pri štarte sa odložila: %s", exc)
@@ -242,6 +251,10 @@ def migrate_visitor_to_account(old_visitor_id, account_id, username):
             if old_visitor_id and old_visitor_id != account_key:
                 cur.execute(
                     "UPDATE posts SET visitor_id = %s WHERE visitor_id = %s",
+                    (account_key, old_visitor_id)
+                )
+                cur.execute(
+                    "UPDATE comments SET visitor_id = %s WHERE visitor_id = %s",
                     (account_key, old_visitor_id)
                 )
                 cur.execute(
@@ -480,6 +493,50 @@ POSTS_HTML = """
                     <span>Páči sa mi</span>
                     <span class="like-count">{{ post.like_count }}</span>
                 </button>
+
+                <button
+                    type="button"
+                    class="comment-toggle-button"
+                    onclick="toggleComments({{ post.id }})"
+                >
+                    <span>💬 Komentáre</span>
+                    <span class="comment-count">{{ post.comment_count }}</span>
+                </button>
+            </div>
+
+            <div class="comments-section" id="comments-section-{{ post.id }}">
+                {% if post.comments %}
+                    <div class="comments-list">
+                        {% for c in post.comments %}
+                            <div class="comment-item">
+                                <div class="comment-meta">
+                                    {% if c.author_account_id %}
+                                        <a href="/messages/{{ c.author_account_id }}" class="post-author-link" title="Poslať súkromnú správu">
+                                            <strong class="post-author">{{ c.nickname }}</strong>
+                                        </a>
+                                    {% else %}
+                                        <strong class="post-author">{{ c.nickname }}</strong>
+                                    {% endif %}
+                                    · {{ c.created_at }}
+                                </div>
+                                <div class="comment-text">{{ c.message }}</div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="comments-empty">Zatiaľ žiadne komentáre. Napíš prvý!</div>
+                {% endif %}
+
+                <form class="comment-form" onsubmit="submitComment(event, {{ post.id }}, this)">
+                    <input
+                        type="text"
+                        class="comment-input"
+                        maxlength="300"
+                        placeholder="Napíš komentár..."
+                        required
+                    >
+                    <button type="submit" class="comment-send-btn">Odoslať</button>
+                </form>
             </div>
         </div>
     {% endfor %}
@@ -598,16 +655,41 @@ button { cursor: pointer; }
 .refresh-info { color: #71869f; font-size: 12px; text-align: center; margin-bottom: 15px; }
 .nickname-status { color: #8ca0b8; font-size: 13px; margin-top: 10px; }
 
-.like-area { margin-top: 14px; border-top: 1px solid #344761; padding-top: 12px; }
-.like-button {
+.like-area {
+    margin-top: 14px; border-top: 1px solid #344761; padding-top: 12px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.like-button, .comment-toggle-button {
     display: inline-flex; align-items: center; gap: 8px; background: transparent;
     border: none; color: #b6c5d8; font-size: 14px; padding: 5px 8px; border-radius: 8px;
 }
-.like-button:hover { background: #293c55; }
+.like-button:hover, .comment-toggle-button:hover { background: #293c55; }
 .heart { font-size: 24px; color: #aab8ca; }
 .like-button.liked { color: #ff6b81; }
 .like-button.liked .heart { color: #ff405e; }
-.like-count { font-weight: bold; color: white; }
+.like-count, .comment-count { font-weight: bold; color: white; }
+
+.comments-section {
+    display: none; margin-top: 12px; padding: 12px;
+    background: #152133; border: 1px solid #2e415c; border-radius: 10px;
+}
+.comments-section.open { display: block; }
+.comments-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.comment-item {
+    background: #101827; border: 1px solid #28384f; border-radius: 8px; padding: 9px 12px;
+}
+.comment-meta { font-size: 11px; color: #8ca0b8; margin-bottom: 4px; }
+.comment-text { font-size: 14px; line-height: 1.4; white-space: pre-wrap; color: #e6eef8; }
+.comments-empty { font-size: 13px; color: #7e93ad; margin-bottom: 10px; }
+.comment-form { display: flex; gap: 8px; align-items: center; }
+.comment-form input.comment-input {
+    margin-top: 0; padding: 9px 12px; font-size: 14px; border-radius: 8px; flex: 1;
+}
+.comment-send-btn {
+    padding: 9px 14px; background: #2689e8; border: none; border-radius: 8px;
+    color: white; font-size: 13px; font-weight: bold; white-space: nowrap;
+}
+.comment-send-btn:hover { background: #1472cb; }
 
 footer { text-align: center; margin-top: 30px; padding-bottom: 20px; font-size: 13px; }
 footer a { color: #71869f; text-decoration: none; }
@@ -745,21 +827,83 @@ addOptionBtn.addEventListener("click", () => {
     if (count + 1 >= 5) addOptionBtn.style.display = "none";
 });
 
-async function refreshPosts() {
+const openCommentPosts = new Set();
+
+function toggleComments(postId) {
+    const section = document.getElementById(`comments-section-${postId}`);
+    if (!section) return;
+    const isOpen = section.classList.toggle("open");
+    if (isOpen) {
+        openCommentPosts.add(String(postId));
+    } else {
+        openCommentPosts.delete(String(postId));
+    }
+}
+
+async function submitComment(event, postId, form) {
+    event.preventDefault();
+    const input = form.querySelector(".comment-input");
+    const btn = form.querySelector(".comment-send-btn");
+    const text = input.value.trim();
+    if (!text) return;
+
+    btn.disabled = true;
     try {
+        const response = await fetch(`/post/${postId}/comment`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+        });
+        if (response.ok) {
+            input.value = "";
+            openCommentPosts.add(String(postId));
+            await refreshPosts(true);
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function refreshPosts(force = false) {
+    const activeEl = document.activeElement;
+    if (!force && activeEl && activeEl.classList.contains("comment-input")) {
+        return;
+    }
+
+    try {
+        const draftComments = {};
+        document.querySelectorAll(".post").forEach(postEl => {
+            const pid = postEl.dataset.postId;
+            const inp = postEl.querySelector(".comment-input");
+            if (inp && inp.value) {
+                draftComments[pid] = inp.value;
+            }
+        });
+
         const response = await fetch("/posts", { cache: "no-store" });
         if (!response.ok) return;
         document.getElementById("posts-container").innerHTML = await response.text();
+
+        openCommentPosts.forEach(pid => {
+            const section = document.getElementById(`comments-section-${pid}`);
+            if (section) section.classList.add("open");
+        });
+
+        Object.entries(draftComments).forEach(([pid, val]) => {
+            const postEl = document.querySelector(`.post[data-post-id="${pid}"]`);
+            const inp = postEl ? postEl.querySelector(".comment-input") : null;
+            if (inp) inp.value = val;
+        });
     } catch (e) {}
 }
-setInterval(refreshPosts, 10000);
+setInterval(() => refreshPosts(false), 10000);
 
 async function votePoll(pollId, optionId, button) {
     const buttons = button.closest(".poll-box").querySelectorAll("button");
     buttons.forEach(b => b.disabled = true);
     try {
         const response = await fetch(`/poll/${pollId}/vote/${optionId}`, { method: "POST" });
-        if (response.ok) await refreshPosts();
+        if (response.ok) await refreshPosts(true);
     } finally {
         buttons.forEach(b => b.disabled = false);
     }
@@ -799,7 +943,7 @@ document.getElementById("nickname-form").addEventListener("submit", async functi
         return;
     }
     status.textContent = "✓ Prezývka bola úspešne uložená.";
-    await refreshPosts();
+    await refreshPosts(true);
 });
 </script>
 </body>
@@ -1421,7 +1565,7 @@ def logout():
 
 
 # ==========================================
-# ZISKANIE PRISPEVKOV VRATANE ANKIET
+# ZISKANIE PRISPEVKOV VRATANE ANKIET A KOMENTAROV
 # ==========================================
 
 def parse_account_id_from_visitor(visitor_id):
@@ -1454,6 +1598,35 @@ def get_posts():
                 ORDER BY p.id DESC
             """, (visitor_id,))
             rows = cur.fetchall()
+
+            cur.execute("""
+                SELECT
+                    c.id,
+                    c.post_id,
+                    c.message,
+                    c.created_at,
+                    c.visitor_id,
+                    COALESCE(u.nickname, 'Anonymný používateľ') AS nickname
+                FROM comments c
+                LEFT JOIN users u ON c.visitor_id = u.visitor_id
+                ORDER BY c.id ASC
+            """)
+            comment_rows = cur.fetchall()
+
+            comments_by_post = {}
+            for c_row in comment_rows:
+                c_post_id = c_row[1]
+                c_author_acc_id = parse_account_id_from_visitor(c_row[4])
+                if g.account and c_author_acc_id == g.account["id"]:
+                    c_author_acc_id = None
+
+                comments_by_post.setdefault(c_post_id, []).append({
+                    "id": c_row[0],
+                    "message": c_row[2],
+                    "created_at": c_row[3],
+                    "nickname": c_row[5],
+                    "author_account_id": c_author_acc_id
+                })
 
             posts = []
             for row in rows:
@@ -1504,6 +1677,8 @@ def get_posts():
                         "user_vote": user_vote
                     }
 
+                post_comments = comments_by_post.get(post_id, [])
+
                 posts.append({
                     "id": row[0],
                     "message": row[1],
@@ -1512,7 +1687,9 @@ def get_posts():
                     "author_account_id": author_acc_id,
                     "like_count": row[5],
                     "liked": bool(row[6]),
-                    "poll": poll_data
+                    "poll": poll_data,
+                    "comments": post_comments,
+                    "comment_count": len(post_comments)
                 })
 
     return posts
@@ -1925,7 +2102,7 @@ def dm_thread_send(partner_id):
 
 
 # ==========================================
-# HLASOVANIE, PREZYVKA, PRISPEVKY, LAJKY
+# HLASOVANIE, PREZYVKA, PRISPEVKY, LAJKY, KOMENTARE
 # ==========================================
 
 @app.route("/poll/<int:poll_id>/vote/<int:option_id>", methods=["POST"])
@@ -1972,6 +2149,29 @@ def change_nickname():
 @app.route("/posts")
 def posts_update():
     return render_template_string(POSTS_HTML, posts=get_posts())
+
+
+@app.route("/post/<int:post_id>/comment", methods=["POST"])
+def add_comment(post_id):
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("message", "")).strip()
+    if not text or len(text) > 300:
+        return jsonify({"error": "Komentár musí mať 1 až 300 znakov."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM posts WHERE id = %s", (post_id,))
+            if not cur.fetchone():
+                return jsonify({"error": "Príspevok neexistuje."}), 404
+
+            created_at = datetime.now().strftime("%d.%m.%Y %H:%M")
+            cur.execute("""
+                INSERT INTO comments (post_id, visitor_id, message, created_at)
+                VALUES (%s, %s, %s, %s)
+            """, (post_id, g.visitor_id, text, created_at))
+        conn.commit()
+
+    return jsonify({"success": True})
 
 
 @app.route("/like/<int:post_id>", methods=["POST"])
@@ -2031,11 +2231,17 @@ input {
 button { cursor: pointer; border: none; border-radius: 8px; padding: 12px; color: white; }
 .login-button, .create-button { width: 100%; background: #2689e8; }
 .delete-button { background: #d93650; margin-top: 8px; }
+.small-delete-btn { background: #d93650; padding: 4px 9px; font-size: 12px; border-radius: 6px; }
 .logout-button { background: #475b73; }
 .error { color: #ff7777; }
 .info { color: #9aabc0; }
 .back-link { display: inline-block; margin-bottom: 15px; color: #42a5ff; text-decoration: none; }
-.admin-poll { background: #152133; padding: 10px 14px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
+.admin-poll, .admin-comments { background: #152133; padding: 10px 14px; border-radius: 8px; margin-top: 10px; font-size: 14px; }
+.admin-comment-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid #28384f;
+}
+.admin-comment-row:last-child { border-bottom: none; }
 .room-admin-row {
     display: flex; justify-content: space-between; align-items: center;
     background: #152133; padding: 12px 15px; border-radius: 8px; margin-top: 10px; gap: 10px;
@@ -2108,8 +2314,25 @@ button { cursor: pointer; border: none; border-radius: 8px; padding: 12px; color
             <p class="info">
                 Autor: {{ post.nickname }}<br>
                 Dátum: {{ post.created_at }}<br>
-                Lajky: {{ post.like_count }}
+                Lajky: {{ post.like_count }} · Komentáre: {{ post.comment_count }}
             </p>
+            {% if post.comments %}
+                <div class="admin-comments">
+                    <strong>💬 Komentáre:</strong>
+                    {% for c in post.comments %}
+                        <div class="admin-comment-row">
+                            <div>
+                                <small class="info">{{ c.nickname }} ({{ c.created_at }}):</small><br>
+                                <span>{{ c.message }}</span>
+                            </div>
+                            <form method="POST" action="/admin/comments/delete/{{ c.id }}" onsubmit="return confirm('Vymazať tento komentár?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="small-delete-btn" type="submit">🗑</button>
+                            </form>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
             <form method="POST" action="/admin/delete/{{ post.id }}" onsubmit="return confirm('Naozaj chceš vymazať tento príspevok?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <button class="delete-button" type="submit">🗑 Vymazať príspevok</button>
@@ -2215,6 +2438,21 @@ def admin_logout():
     return redirect("/admin")
 
 
+@app.route("/admin/comments/delete/<int:comment_id>", methods=["POST"])
+def admin_delete_comment(comment_id):
+    if not session.get("is_admin"):
+        return redirect("/admin")
+    if not valid_admin_csrf():
+        return "Neplatná požiadavka.", 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM comments WHERE id = %s", (comment_id,))
+        conn.commit()
+
+    return redirect("/admin")
+
+
 @app.route("/admin/delete/<int:post_id>", methods=["POST"])
 def admin_delete_post(post_id):
     if not session.get("is_admin"):
@@ -2231,6 +2469,7 @@ def admin_delete_post(post_id):
                 cur.execute("DELETE FROM poll_votes WHERE poll_id = %s", (poll_id,))
                 cur.execute("DELETE FROM poll_options WHERE poll_id = %s", (poll_id,))
                 cur.execute("DELETE FROM polls WHERE id = %s", (poll_id,))
+            cur.execute("DELETE FROM comments WHERE post_id = %s", (post_id,))
             cur.execute("DELETE FROM likes WHERE post_id = %s", (post_id,))
             cur.execute("DELETE FROM posts WHERE id = %s", (post_id,))
         conn.commit()
