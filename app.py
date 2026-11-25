@@ -37,47 +37,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _DB_READY = False
 
 
-CHARACTER_STYLES = ["Ležérny", "Športový", "Elegantný", "Kyber / Sci-fi", "Fantasy", "Alternatívny"]
-CHARACTER_HAIRS = ["Krátky", "Dlhé vlasy", "Copíky", "Rozcuchaný", "Drdol"]
-CHARACTER_HAIR_COLORS = {
-    "#2b2118": "Tmavohnedá",
-    "#6e472b": "Gaštanová",
-    "#d8b26e": "Blond",
-    "#181a20": "Čierna",
-    "#b83b2a": "Ryšavá",
-    "#42a5ff": "Modrá",
-    "#9b5de5": "Fialová",
-    "#e5e9f0": "Strieborná",
-}
-CHARACTER_EYE_COLORS = {
-    "#3b82f6": "Modrá",
-    "#22c55e": "Zelená",
-    "#8b5a2b": "Hnedá",
-    "#64748b": "Sivá",
-    "#a855f7": "Fialová",
-    "#f59e0b": "Jantárová",
-}
-CHARACTER_OUTFITS = ["Mikina", "Bunda", "Košeľa", "Sveter", "Šaty", "Oblek"]
-CHARACTER_OUTFIT_COLORS = {
-    "#2689e8": "Modrá",
-    "#e11d48": "Karmínová",
-    "#10b981": "Smaragdová",
-    "#f59e0b": "Horčicová",
-    "#8b5cf6": "Fialová",
-    "#334155": "Antracitová",
-    "#e2e8f0": "Biela",
-}
-CHARACTER_ACCESSORIES = ["Žiadne", "Okuliare", "Slúchadlá", "Šál", "Batoh", "Klobúk"]
-CHARACTER_MOODS = [
-    "😊 V pohode",
-    "⚡ Nabudený",
-    "😎 Cool",
-    "🤔 Zamyslený",
-    "🎉 Spoločenský",
-    "🌙 Nočná sova",
-]
-
-
 def open_db():
     if not DATABASE_URL:
         raise RuntimeError(
@@ -192,23 +151,6 @@ def ensure_schema(conn):
                 message TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 is_read INTEGER NOT NULL DEFAULT 0
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS character_profiles (
-                visitor_id TEXT PRIMARY KEY,
-                char_name TEXT NOT NULL,
-                style TEXT NOT NULL,
-                hair TEXT NOT NULL,
-                hair_color TEXT NOT NULL,
-                eye_color TEXT NOT NULL,
-                outfit TEXT NOT NULL,
-                outfit_color TEXT NOT NULL,
-                accessory TEXT NOT NULL,
-                mood TEXT NOT NULL,
-                bio TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL
             )
         """)
 
@@ -351,22 +293,6 @@ def migrate_visitor_to_account(old_visitor_id, account_id, username):
                         cur.execute("DELETE FROM poll_votes WHERE id = %s", (vote_id,))
                     else:
                         cur.execute("UPDATE poll_votes SET visitor_id = %s WHERE id = %s", (account_key, vote_id))
-
-                cur.execute(
-                    "SELECT * FROM character_profiles WHERE visitor_id = %s",
-                    (old_visitor_id,)
-                )
-                old_char = cur.fetchone()
-                if old_char:
-                    cur.execute("SELECT 1 FROM character_profiles WHERE visitor_id = %s", (account_key,))
-                    has_acc_char = cur.fetchone()
-                    if not has_acc_char:
-                        cur.execute(
-                            "UPDATE character_profiles SET visitor_id = %s WHERE visitor_id = %s",
-                            (account_key, old_visitor_id)
-                        )
-                    else:
-                        cur.execute("DELETE FROM character_profiles WHERE visitor_id = %s", (old_visitor_id,))
 
         conn.commit()
 
@@ -661,7 +587,7 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
 
 .nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; min-width: 125px; text-align: center; padding: 11px 8px; background: #1d2b40;
+    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
     text-decoration: none; font-weight: bold; font-size: 14px;
     display: inline-flex; justify-content: center; align-items: center; gap: 6px;
@@ -812,7 +738,6 @@ footer a:hover { color: #42a5ff; }
         ✉️ Súkromné
         {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
     </a>
-    <a href="/club" class="nav-tab">🎭 Klub</a>
 </nav>
 
 <div class="panel">
@@ -1035,27 +960,26 @@ document.getElementById("nickname-form").addEventListener("submit", async functi
 
 
 # ==========================================
-# HTML PRE KLUB A TVORCU POSTAVY
+# HTML PRE CHATOVACIE MIESTNOSTI
 # ==========================================
 
-CLUB_HTML = """
+CHAT_ROOMS_HTML = """
 <!DOCTYPE html>
 <html lang="sk">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Klub a postavy - Moja komunita</title>
+<title>Chatovacie miestnosti - Moja komunita</title>
 <style>
 * { box-sizing: border-box; }
 body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-.container { max-width: 720px; margin: auto; }
+.container { max-width: 650px; margin: auto; }
 header { text-align: center; padding: 20px 10px; }
 h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
-.subtitle { color: #9aabc0; margin: 6px 0; font-size: 14px; }
-
+.subtitle { color: #9aabc0; margin: 6px 0; }
 .nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; min-width: 125px; text-align: center; padding: 11px 8px; background: #1d2b40;
+    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
     text-decoration: none; font-weight: bold; font-size: 14px;
     display: inline-flex; justify-content: center; align-items: center; gap: 6px;
@@ -1065,354 +989,202 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
     background: #ff405e; color: white; border-radius: 999px;
     padding: 1px 7px; font-size: 11px; font-weight: bold;
 }
-
-.panel { background: #1d2b40; padding: 22px; border-radius: 15px; border: 1px solid #344761; margin-bottom: 22px; }
-.creator-grid { display: grid; grid-template-columns: 200px 1fr; gap: 20px; align-items: start; }
-@media (max-width: 600px) {
-    .creator-grid { grid-template-columns: 1fr; }
+.room-card {
+    display: block; background: #1d2b40; padding: 18px 20px; border-radius: 14px;
+    margin-bottom: 14px; border: 1px solid #344761; text-decoration: none; color: white;
 }
-
-.preview-card {
-    background: #152133; border: 1px solid #344761; border-radius: 14px;
-    padding: 14px; text-align: center;
+.room-card:hover { border-color: #42a5ff; }
+.room-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.room-title { font-size: 19px; font-weight: bold; color: #42a5ff; }
+.room-badge {
+    background: #101827; border: 1px solid #344761; color: #9aabc0;
+    padding: 4px 10px; border-radius: 20px; font-size: 12px; white-space: nowrap;
 }
-.avatar-box {
-    width: 140px; height: 165px; margin: 0 auto 10px auto;
-    background: #0c1320; border: 2px solid #2c3f59; border-radius: 14px;
-    display: flex; align-items: center; justify-content: center; overflow: hidden;
+.room-desc { color: #b6c5d8; font-size: 14px; margin-top: 8px; }
+.user-info-bar {
+    background: #152133; border: 1px solid #344761; padding: 12px 16px;
+    border-radius: 10px; margin-bottom: 20px; font-size: 14px; color: #9aabc0;
+    display: flex; justify-content: space-between; align-items: center;
 }
-.preview-name { font-weight: bold; font-size: 16px; color: #42a5ff; overflow-wrap: anywhere; }
-.preview-mood { font-size: 13px; color: #d6e4f5; margin-top: 4px; }
-.preview-style { font-size: 12px; color: #8ca0b8; margin-top: 4px; }
-
-.form-row { margin-bottom: 12px; }
-label { display: block; font-size: 13px; color: #b6c5d8; margin-bottom: 5px; font-weight: bold; }
-input[type=text], select, textarea {
-    width: 100%; padding: 10px 12px; background: #101827; border: 1px solid #344761;
-    border-radius: 10px; color: white; font-size: 14px;
-}
-textarea { min-height: 70px; resize: vertical; }
-
-.two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 500px) {
-    .two-cols { grid-template-columns: 1fr; }
-}
-
-.save-btn {
-    width: 100%; margin-top: 8px; padding: 13px; background: #2689e8;
-    border: none; border-radius: 10px; color: white; font-size: 15px; font-weight: bold; cursor: pointer;
-}
-.save-btn:hover { background: #1472cb; }
-.saved-banner {
-    background: rgba(16, 185, 129, 0.16); border: 1px solid #10b981; color: #86efac;
-    padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px;
-}
-.error-banner {
-    background: rgba(217, 54, 80, 0.18); border: 1px solid #d93650; color: #ff99aa;
-    padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px;
-}
-
-.roster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
-.member-card {
-    background: #1d2b40; border: 1px solid #344761; border-radius: 14px;
-    padding: 15px; display: flex; flex-direction: column; gap: 8px;
-}
-.member-top { display: flex; gap: 12px; align-items: center; }
-.member-avatar-mini {
-    width: 64px; height: 76px; background: #0c1320; border: 1px solid #2c3f59;
-    border-radius: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-}
-.member-title { font-weight: bold; font-size: 16px; color: #42a5ff; overflow-wrap: anywhere; }
-.member-owner { font-size: 12px; color: #8ca0b8; }
-.member-mood { font-size: 13px; color: #e2e8f0; }
-.member-tags { display: flex; flex-wrap: wrap; gap: 5px; }
-.tag {
-    background: #152133; border: 1px solid #2e415c; color: #b6c5d8;
-    font-size: 11px; padding: 3px 8px; border-radius: 999px;
-}
-.member-bio { font-size: 13px; color: #cbd5e1; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
-.dm-link-btn {
-    margin-top: auto; display: inline-block; text-align: center; padding: 8px 10px;
-    background: #293c55; border: 1px solid #3d5678; border-radius: 8px;
-    color: #d6e4f5; text-decoration: none; font-size: 12px; font-weight: bold;
-}
-.dm-link-btn:hover { background: #2689e8; border-color: #2689e8; color: white; }
-.empty { text-align: center; color: #8ca0b8; padding: 25px; background: #152133; border: 1px solid #344761; border-radius: 12px; }
+.user-info-bar a { color: #42a5ff; text-decoration: none; font-size: 13px; }
 </style>
 </head>
 <body>
 <div class="container">
 <header>
     <h1>MOJA KOMUNITA</h1>
-    <p class="subtitle">Vytvor si vlastnú postavu a stretni ostatných v klube</p>
+    <p class="subtitle">Vyber si miestnosť a zapoj sa do debaty</p>
 </header>
-
 <nav class="nav-tabs">
     <a href="/" class="nav-tab">📋 Nástenka</a>
-    <a href="/chat" class="nav-tab">💬 Chat</a>
+    <a href="/chat" class="nav-tab active">💬 Chat</a>
     <a href="/messages" class="nav-tab">
         ✉️ Súkromné
         {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
     </a>
-    <a href="/club" class="nav-tab active">🎭 Klub</a>
 </nav>
-
-<div class="panel">
-    <h2 style="margin-top: 0;">✨ Tvoja postava</h2>
-    <p class="subtitle">Uprav si vzhľad, oblečenie a náladu. Postava sa uloží do databázy.</p>
-
-    {% if saved %}<div class="saved-banner">✓ Postava bola uložená!</div>{% endif %}
-    {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
-
-    <form method="POST" action="/club">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="creator-grid">
-            <div class="preview-card">
-                <div class="avatar-box" id="live-avatar"></div>
-                <div class="preview-name" id="preview-name">{{ char.char_name }}</div>
-                <div class="preview-mood" id="preview-mood">{{ char.mood }}</div>
-                <div class="preview-style" id="preview-style">{{ char.style }} · {{ char.outfit }}</div>
-            </div>
-
-            <div>
-                <div class="two-cols">
-                    <div class="form-row">
-                        <label for="char_name">Meno postavy</label>
-                        <input type="text" id="char_name" name="char_name" maxlength="24" value="{{ char.char_name }}" required>
-                    </div>
-                    <div class="form-row">
-                        <label for="mood">Nálada / stav</label>
-                        <select id="mood" name="mood">
-                            {% for m in moods %}
-                                <option value="{{ m }}" {% if char.mood == m %}selected{% endif %}>{{ m }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="two-cols">
-                    <div class="form-row">
-                        <label for="style">Štýl</label>
-                        <select id="style" name="style">
-                            {% for s in styles %}
-                                <option value="{{ s }}" {% if char.style == s %}selected{% endif %}>{{ s }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="form-row">
-                        <label for="accessory">Doplnok</label>
-                        <select id="accessory" name="accessory">
-                            {% for a in accessories %}
-                                <option value="{{ a }}" {% if char.accessory == a %}selected{% endif %}>{{ a }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="two-cols">
-                    <div class="form-row">
-                        <label for="hair">Účes</label>
-                        <select id="hair" name="hair">
-                            {% for h in hairs %}
-                                <option value="{{ h }}" {% if char.hair == h %}selected{% endif %}>{{ h }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="form-row">
-                        <label for="hair_color">Farba vlasov</label>
-                        <select id="hair_color" name="hair_color">
-                            {% for hex_val, label in hair_colors.items() %}
-                                <option value="{{ hex_val }}" {% if char.hair_color == hex_val %}selected{% endif %}>{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="two-cols">
-                    <div class="form-row">
-                        <label for="outfit">Oblečenie</label>
-                        <select id="outfit" name="outfit">
-                            {% for o in outfits %}
-                                <option value="{{ o }}" {% if char.outfit == o %}selected{% endif %}>{{ o }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="form-row">
-                        <label for="outfit_color">Farba oblečenia</label>
-                        <select id="outfit_color" name="outfit_color">
-                            {% for hex_val, label in outfit_colors.items() %}
-                                <option value="{{ hex_val }}" {% if char.outfit_color == hex_val %}selected{% endif %}>{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-
-                <div class="form-row">
-                    <label for="eye_color">Farba očí</label>
-                    <select id="eye_color" name="eye_color">
-                        {% for hex_val, label in eye_colors.items() %}
-                            <option value="{{ hex_val }}" {% if char.eye_color == hex_val %}selected{% endif %}>{{ label }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-
-                <div class="form-row">
-                    <label for="bio">Krátky popis postavy</label>
-                    <textarea id="bio" name="bio" maxlength="200" placeholder="Kto je tvoja postava a čo práve robí?">{{ char.bio }}</textarea>
-                </div>
-
-                <button type="submit" class="save-btn">💾 Uložiť postavu</button>
-            </div>
+<div class="user-info-bar">
+    <span>
+        Vystupuješ ako: <strong style="color: white;">{{ nickname }}</strong>
+        {% if account %}<small style="color: #42a5ff;">(@{{ account.username }})</small>{% endif %}
+    </span>
+    <a href="/">Zmeniť prezývku</a>
+</div>
+{% for room in rooms %}
+    <a href="/chat/{{ room.id }}" class="room-card">
+        <div class="room-header">
+            <span class="room-title">{{ room.name }}</span>
+            <span class="room-badge">{{ room.message_count }} správ</span>
         </div>
-    </form>
+        {% if room.description %}<div class="room-desc">{{ room.description }}</div>{% endif %}
+    </a>
+{% else %}
+    <p class="subtitle" style="text-align: center;">Zatiaľ nie sú vytvorené žiadne miestnosti.</p>
+{% endfor %}
+</div>
+</body>
+</html>
+"""
+
+CHAT_ROOM_DETAIL_HTML = """
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ room.name }} - Chat</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    background: #101827; color: white; font-family: Arial, sans-serif;
+    margin: 0; padding: 15px; height: 100dvh; display: flex; flex-direction: column;
+}
+.chat-wrapper { max-width: 650px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
+.chat-header {
+    background: #1d2b40; padding: 14px 18px; border-radius: 14px;
+    border: 1px solid #344761; display: flex; justify-content: space-between;
+    align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.back-btn { color: #42a5ff; text-decoration: none; font-weight: bold; font-size: 14px; }
+.room-info { text-align: center; }
+.room-info h2 { margin: 0; font-size: 18px; color: white; }
+.room-info small { color: #8ca0b8; font-size: 12px; }
+.messages-box {
+    flex: 1; background: #152133; border: 1px solid #344761; border-radius: 14px;
+    padding: 15px; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 10px; margin-bottom: 12px;
+}
+.msg {
+    max-width: 80%; padding: 10px 14px; border-radius: 14px; background: #1d2b40;
+    border: 1px solid #2c3f59; align-self: flex-start; overflow-wrap: anywhere;
+}
+.msg.mine { align-self: flex-end; background: #1a4b82; border-color: #2689e8; }
+.msg-meta { font-size: 11px; color: #8ca0b8; margin-bottom: 4px; }
+.msg.mine .msg-meta { color: #b8dcff; text-align: right; }
+.msg-author { font-weight: bold; color: #42a5ff; }
+.msg.mine .msg-author { color: white; }
+.msg-text { font-size: 15px; line-height: 1.4; white-space: pre-wrap; }
+.chat-form { display: flex; gap: 10px; }
+.chat-input {
+    flex: 1; padding: 13px 15px; background: #1d2b40; border: 1px solid #344761;
+    border-radius: 12px; color: white; font-size: 15px;
+}
+.send-btn {
+    padding: 13px 20px; background: #2689e8; border: none; border-radius: 12px;
+    color: white; font-weight: bold; font-size: 15px; cursor: pointer;
+}
+.empty-chat { text-align: center; color: #71869f; margin: auto; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="chat-wrapper">
+<div class="chat-header">
+    <a href="/chat" class="back-btn">← Miestnosti</a>
+    <div class="room-info">
+        <h2>{{ room.name }}</h2>
+        <small>Tvoja prezývka: {{ nickname }}</small>
+    </div>
+    <div style="width: 75px;"></div>
 </div>
 
-<h2>🏛️ Postavy v klube ({{ members|length }})</h2>
-{% if members %}
-    <div class="roster-grid">
-        {% for m in members %}
-            <div class="member-card">
-                <div class="member-top">
-                    <div class="member-avatar-mini" data-avatar='{{ m.avatar_json }}'></div>
-                    <div style="min-width: 0;">
-                        <div class="member-title">{{ m.char_name }}</div>
-                        <div class="member-owner">{{ m.nickname }}</div>
-                        <div class="member-mood">{{ m.mood }}</div>
-                    </div>
-                </div>
-                <div class="member-tags">
-                    <span class="tag">{{ m.style }}</span>
-                    <span class="tag">{{ m.outfit }}</span>
-                    {% if m.accessory != "Žiadne" %}
-                        <span class="tag">{{ m.accessory }}</span>
-                    {% endif %}
-                </div>
-                {% if m.bio %}
-                    <div class="member-bio">{{ m.bio }}</div>
-                {% endif %}
-                {% if m.account_id %}
-                    <a href="/messages/{{ m.account_id }}" class="dm-link-btn">✉️ Napísať správu</a>
-                {% endif %}
-            </div>
-        {% endfor %}
-    </div>
-{% else %}
-    <div class="empty">Zatiaľ tu nie sú žiadne uložené postavy. Vytvor prvú!</div>
-{% endif %}
+<div class="messages-box" id="messages-box">
+    <div class="empty-chat">Načítavam správy...</div>
+</div>
+
+<form class="chat-form" id="chat-form">
+    <input type="text" id="chat-input" class="chat-input" maxlength="400" placeholder="Napíš správu do miestnosti..." autocomplete="off" required>
+    <button type="submit" class="send-btn" id="send-btn">Odoslať</button>
+</form>
 </div>
 
 <script>
-function buildAvatarSvg(cfg) {
-    const hair = cfg.hair || "Krátky";
-    const hairColor = cfg.hair_color || "#2b2118";
-    const eyeColor = cfg.eye_color || "#3b82f6";
-    const outfit = cfg.outfit || "Mikina";
-    const outfitColor = cfg.outfit_color || "#2689e8";
-    const accessory = cfg.accessory || "Žiadne";
-    const skinColor = "#f1c29b";
+const roomId = {{ room.id }};
+const messagesBox = document.getElementById("messages-box");
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
+const sendBtn = document.getElementById("send-btn");
+let lastRenderedJson = "";
 
-    let backHair = "";
-    let frontHair = "";
-    if (hair === "Dlhé vlasy") {
-        backHair = `<rect x="26" y="34" width="48" height="52" rx="18" fill="${hairColor}" />`;
-        frontHair = `<path d="M28 36 Q50 14 72 36 L72 44 Q50 32 28 44 Z" fill="${hairColor}" />`;
-    } else if (hair === "Copíky") {
-        backHair = `<circle cx="24" cy="46" r="10" fill="${hairColor}" /><circle cx="76" cy="46" r="10" fill="${hairColor}" />`;
-        frontHair = `<path d="M28 38 Q50 15 72 38 L70 45 Q50 34 30 45 Z" fill="${hairColor}" />`;
-    } else if (hair === "Drdol") {
-        backHair = `<circle cx="50" cy="15" r="11" fill="${hairColor}" />`;
-        frontHair = `<path d="M28 38 Q50 18 72 38 L70 44 Q50 34 30 44 Z" fill="${hairColor}" />`;
-    } else if (hair === "Rozcuchaný") {
-        frontHair = `<polygon points="26,38 32,20 42,29 50,16 59,29 70,20 74,38 50,33" fill="${hairColor}" />`;
-    } else {
-        frontHair = `<path d="M28 38 Q50 16 72 38 L72 43 Q50 33 28 43 Z" fill="${hairColor}" />`;
-    }
-
-    let outfitSvg = `<path d="M24 115 L28 76 Q50 70 72 76 L76 115 Z" fill="${outfitColor}" />`;
-    if (outfit === "Košeľa" || outfit === "Oblek") {
-        outfitSvg += `<polygon points="44,74 56,74 50,94" fill="#ffffff" opacity="0.85" />`;
-    } else if (outfit === "Šaty") {
-        outfitSvg += `<polygon points="26,76 74,76 84,115 16,115" fill="${outfitColor}" />`;
-    } else if (outfit === "Bunda") {
-        outfitSvg += `<line x1="50" y1="74" x2="50" y2="115" stroke="#0c1320" stroke-width="2.5" opacity="0.55" />`;
-    }
-
-    let accSvg = "";
-    if (accessory === "Okuliare") {
-        accSvg = `
-            <rect x="33" y="45" width="13" height="9" rx="2" fill="none" stroke="#e2e8f0" stroke-width="2.2" />
-            <rect x="54" y="45" width="13" height="9" rx="2" fill="none" stroke="#e2e8f0" stroke-width="2.2" />
-            <line x1="46" y1="49" x2="54" y2="49" stroke="#e2e8f0" stroke-width="2.2" />
-        `;
-    } else if (accessory === "Slúchadlá") {
-        accSvg = `
-            <path d="M25 48 A25 25 0 0 1 75 48" fill="none" stroke="#cbd5e1" stroke-width="3.5" />
-            <rect x="21" y="43" width="7" height="15" rx="3" fill="#42a5ff" />
-            <rect x="72" y="43" width="7" height="15" rx="3" fill="#42a5ff" />
-        `;
-    } else if (accessory === "Šál") {
-        accSvg = `
-            <rect x="31" y="68" width="38" height="9" rx="4" fill="#ff405e" />
-            <rect x="56" y="74" width="8" height="18" rx="3" fill="#ff405e" />
-        `;
-    } else if (accessory === "Klobúk") {
-        accSvg = `
-            <rect x="22" y="29" width="56" height="5" rx="2.5" fill="#94a3b8" />
-            <rect x="33" y="16" width="34" height="14" rx="4" fill="#64748b" />
-        `;
-    } else if (accessory === "Batoh") {
-        accSvg = `<rect x="65" y="78" width="12" height="24" rx="4" fill="#8b5a2b" opacity="0.9" />`;
-    }
-
-    return `
-        <svg viewBox="0 0 100 120" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-            ${backHair}
-            ${outfitSvg}
-            <rect x="44" y="64" width="12" height="12" rx="4" fill="${skinColor}" />
-            <circle cx="50" cy="49" r="19" fill="${skinColor}" />
-            <circle cx="42" cy="49" r="3.2" fill="${eyeColor}" />
-            <circle cx="58" cy="49" r="3.2" fill="${eyeColor}" />
-            <path d="M44 58 Q50 62 56 58" fill="none" stroke="#5c3a28" stroke-width="2" stroke-linecap="round" />
-            ${frontHair}
-            ${accSvg}
-        </svg>
-    `;
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
 }
 
-function updateLivePreview() {
-    const cfg = {
-        char_name: document.getElementById("char_name").value || "Moja postava",
-        mood: document.getElementById("mood").value,
-        style: document.getElementById("style").value,
-        accessory: document.getElementById("accessory").value,
-        hair: document.getElementById("hair").value,
-        hair_color: document.getElementById("hair_color").value,
-        outfit: document.getElementById("outfit").value,
-        outfit_color: document.getElementById("outfit_color").value,
-        eye_color: document.getElementById("eye_color").value,
-    };
-    document.getElementById("live-avatar").innerHTML = buildAvatarSvg(cfg);
-    document.getElementById("preview-name").textContent = cfg.char_name;
-    document.getElementById("preview-mood").textContent = cfg.mood;
-    document.getElementById("preview-style").textContent = `${cfg.style} · ${cfg.outfit}`;
-}
-
-["char_name", "mood", "style", "accessory", "hair", "hair_color", "outfit", "outfit_color", "eye_color"].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-        el.addEventListener("input", updateLivePreview);
-        el.addEventListener("change", updateLivePreview);
-    }
-});
-
-document.querySelectorAll(".member-avatar-mini").forEach(box => {
+async function loadMessages(forceScroll = false) {
     try {
-        const cfg = JSON.parse(box.dataset.avatar || "{}");
-        box.innerHTML = buildAvatarSvg(cfg);
+        const response = await fetch(`/chat/${roomId}/messages`, { cache: "no-store" });
+        if (!response.ok) return;
+        const messages = await response.json();
+        const currentJson = JSON.stringify(messages);
+        if (currentJson === lastRenderedJson) return;
+        lastRenderedJson = currentJson;
+
+        const isNearBottom = messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 90;
+
+        if (messages.length === 0) {
+            messagesBox.innerHTML = '<div class="empty-chat">Zatiaľ tu nie sú žiadne správy. Napíš prvú!</div>';
+            return;
+        }
+
+        messagesBox.innerHTML = messages.map(m => `
+            <div class="msg ${m.is_mine ? 'mine' : ''}">
+                <div class="msg-meta">
+                    <span class="msg-author">${escapeHtml(m.nickname)}</span> · ${escapeHtml(m.created_at)}
+                </div>
+                <div class="msg-text">${escapeHtml(m.message)}</div>
+            </div>
+        `).join("");
+
+        if (forceScroll || isNearBottom) {
+            messagesBox.scrollTop = messagesBox.scrollHeight;
+        }
     } catch (e) {}
+}
+
+chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = chatInput.value.trim();
+    if (!text) return;
+    sendBtn.disabled = true;
+    try {
+        const response = await fetch(`/chat/${roomId}/send`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+        });
+        if (response.ok) {
+            chatInput.value = "";
+            await loadMessages(true);
+        }
+    } finally {
+        sendBtn.disabled = false;
+        chatInput.focus();
+    }
 });
 
-updateLivePreview();
+loadMessages(true);
+setInterval(() => loadMessages(false), 4000);
 </script>
 </body>
 </html>
@@ -1420,180 +1192,272 @@ updateLivePreview();
 
 
 # ==========================================
-# KLUB A POSTAVY - ROUTES
+# HTML PRE SUKROMNE SPRAVY
 # ==========================================
 
-def get_default_character():
-    nick = get_nickname()
-    base_name = nick if nick != "Anonymný používateľ" else "Nová postava"
-    return {
-        "char_name": base_name[:24],
-        "style": "Ležérny",
-        "hair": "Krátky",
-        "hair_color": "#2b2118",
-        "eye_color": "#3b82f6",
-        "outfit": "Mikina",
-        "outfit_color": "#2689e8",
-        "accessory": "Žiadne",
-        "mood": "😊 V pohode",
-        "bio": ""
-    }
+DM_INBOX_HTML = """
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Súkromné správy - Moja komunita</title>
+<style>
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 650px; margin: auto; }
+header { text-align: center; padding: 20px 10px; }
+h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
+.subtitle { color: #9aabc0; margin: 6px 0; }
+.nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
+.nav-tab {
+    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
+    border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
+    text-decoration: none; font-weight: bold; font-size: 14px;
+    display: inline-flex; justify-content: center; align-items: center; gap: 6px;
+}
+.nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
+.unread-badge {
+    background: #ff405e; color: white; border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: bold;
+}
+.panel { background: #1d2b40; padding: 20px; border-radius: 15px; border: 1px solid #344761; margin-bottom: 20px; }
+.start-form { display: flex; gap: 10px; margin-top: 10px; }
+input[type=text] {
+    flex: 1; padding: 12px 14px; background: #101827; border: 1px solid #344761;
+    border-radius: 10px; color: white; font-size: 15px;
+}
+.primary-btn {
+    padding: 12px 18px; background: #2689e8; border: none; border-radius: 10px;
+    color: white; font-weight: bold; font-size: 14px; cursor: pointer; text-decoration: none;
+    display: inline-block;
+}
+.primary-btn:hover { background: #1472cb; }
+.error { background: rgba(217, 54, 80, 0.18); border: 1px solid #d93650; color: #ff99aa; padding: 10px 12px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+.conv-card {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    background: #1d2b40; padding: 16px 18px; border-radius: 12px;
+    border: 1px solid #344761; margin-bottom: 12px; text-decoration: none; color: white;
+}
+.conv-card:hover { border-color: #42a5ff; }
+.conv-name { font-size: 16px; font-weight: bold; color: #42a5ff; }
+.conv-handle { color: #8ca0b8; font-size: 12px; font-weight: normal; }
+.conv-preview { color: #b6c5d8; font-size: 14px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 430px; }
+.conv-meta { text-align: right; font-size: 12px; color: #8ca0b8; }
+.empty { text-align: center; color: #8ca0b8; padding: 25px; background: #152133; border: 1px solid #344761; border-radius: 12px; }
+.auth-cta { display: flex; gap: 12px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+.secondary-link {
+    padding: 12px 18px; background: #293c55; border: 1px solid #3d5678; border-radius: 10px;
+    color: #d6e4f5; text-decoration: none; font-weight: bold; font-size: 14px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+    <h1>MOJA KOMUNITA</h1>
+    <p class="subtitle">Súkromné 1-na-1 správy medzi účtami</p>
+</header>
 
+<nav class="nav-tabs">
+    <a href="/" class="nav-tab">📋 Nástenka</a>
+    <a href="/chat" class="nav-tab">💬 Chat</a>
+    <a href="/messages" class="nav-tab active">
+        ✉️ Súkromné
+        {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
+    </a>
+</nav>
 
-@app.route("/games")
-def games_redirect():
-    return redirect("/club")
+{% if not account %}
+    <div class="panel" style="text-align: center;">
+        <h2 style="margin-top: 0;">Súkromné správy sú pre registrované účty</h2>
+        <p class="subtitle">Prihlás sa alebo si vytvor bezplatný účet, aby si mohol písať súkromné správy ostatným členom komunity.</p>
+        <div class="auth-cta">
+            <a href="/login" class="primary-btn">Prihlásiť sa</a>
+            <a href="/register" class="secondary-link">Zaregistrovať sa</a>
+        </div>
+    </div>
+{% else %}
+    <div class="panel">
+        <h2 style="margin-top: 0;">✉️ Nová súkromná konverzácia</h2>
+        <p class="subtitle">Zadaj používateľské meno (napr. <code>marek_99</code>) alebo prezývku člena komunity.</p>
+        <form method="POST" action="/messages/start" class="start-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="target_user" maxlength="20" placeholder="Používateľské meno alebo prezývka..." required>
+            <button type="submit" class="primary-btn">Otvoriť čet</button>
+        </form>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    </div>
 
+    <h2>Tvoje konverzácie</h2>
+    {% if conversations %}
+        {% for conv in conversations %}
+            <a href="/messages/{{ conv.partner_id }}" class="conv-card">
+                <div style="min-width: 0;">
+                    <div class="conv-name">
+                        {{ conv.partner_nickname }}
+                        <span class="conv-handle">@{{ conv.partner_username }}</span>
+                    </div>
+                    <div class="conv-preview">{{ conv.last_message }}</div>
+                </div>
+                <div class="conv-meta">
+                    <div>{{ conv.last_time }}</div>
+                    {% if conv.unread > 0 %}
+                        <div style="margin-top: 6px;"><span class="unread-badge">{{ conv.unread }} nové</span></div>
+                    {% endif %}
+                </div>
+            </a>
+        {% endfor %}
+    {% else %}
+        <div class="empty">
+            Zatiaľ nemáš žiadne súkromné správy (0 správ). Začni novú konverzáciu cez formulár vyššie alebo klikni na meno autora pri príspevku na nástenke.
+        </div>
+    {% endif %}
+{% endif %}
+</div>
+</body>
+</html>
+"""
 
-@app.route("/club", methods=["GET", "POST"])
-def club_view():
-    error = ""
-    saved = request.args.get("saved") == "1"
+DM_THREAD_HTML = """
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Čet s {{ partner.nickname }} - Súkromné správy</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    background: #101827; color: white; font-family: Arial, sans-serif;
+    margin: 0; padding: 15px; height: 100dvh; display: flex; flex-direction: column;
+}
+.chat-wrapper { max-width: 650px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
+.chat-header {
+    background: #1d2b40; padding: 14px 18px; border-radius: 14px;
+    border: 1px solid #344761; display: flex; justify-content: space-between;
+    align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.back-btn { color: #42a5ff; text-decoration: none; font-weight: bold; font-size: 14px; }
+.room-info { text-align: center; }
+.room-info h2 { margin: 0; font-size: 18px; color: white; }
+.room-info small { color: #8ca0b8; font-size: 12px; }
+.messages-box {
+    flex: 1; background: #152133; border: 1px solid #344761; border-radius: 14px;
+    padding: 15px; overflow-y: auto; display: flex; flex-direction: column;
+    gap: 10px; margin-bottom: 12px;
+}
+.msg {
+    max-width: 80%; padding: 10px 14px; border-radius: 14px; background: #1d2b40;
+    border: 1px solid #2c3f59; align-self: flex-start; overflow-wrap: anywhere;
+}
+.msg.mine { align-self: flex-end; background: #1a4b82; border-color: #2689e8; }
+.msg-meta { font-size: 11px; color: #8ca0b8; margin-bottom: 4px; }
+.msg.mine .msg-meta { color: #b8dcff; text-align: right; }
+.msg-text { font-size: 15px; line-height: 1.4; white-space: pre-wrap; }
+.chat-form { display: flex; gap: 10px; }
+.chat-input {
+    flex: 1; padding: 13px 15px; background: #1d2b40; border: 1px solid #344761;
+    border-radius: 12px; color: white; font-size: 15px;
+}
+.send-btn {
+    padding: 13px 20px; background: #2689e8; border: none; border-radius: 12px;
+    color: white; font-weight: bold; font-size: 15px; cursor: pointer;
+}
+.empty-chat { text-align: center; color: #71869f; margin: auto; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="chat-wrapper">
+<div class="chat-header">
+    <a href="/messages" class="back-btn">← Správy</a>
+    <div class="room-info">
+        <h2>{{ partner.nickname }}</h2>
+        <small>@{{ partner.username }}</small>
+    </div>
+    <div style="width: 65px;"></div>
+</div>
 
-    if request.method == "POST":
-        if not valid_auth_csrf():
-            error = "Neplatná požiadavka. Obnov stránku."
-        else:
-            char_name = request.form.get("char_name", "").strip()[:24]
-            style = request.form.get("style", "Ležérny")
-            hair = request.form.get("hair", "Krátky")
-            hair_color = request.form.get("hair_color", "#2b2118")
-            eye_color = request.form.get("eye_color", "#3b82f6")
-            outfit = request.form.get("outfit", "Mikina")
-            outfit_color = request.form.get("outfit_color", "#2689e8")
-            accessory = request.form.get("accessory", "Žiadne")
-            mood = request.form.get("mood", "😊 V pohode")
-            bio = request.form.get("bio", "").strip()[:200]
+<div class="messages-box" id="messages-box">
+    <div class="empty-chat">Načítavam konverzáciu...</div>
+</div>
 
-            if not char_name:
-                error = "Zadaj meno postavy."
-            else:
-                if style not in CHARACTER_STYLES:
-                    style = CHARACTER_STYLES[0]
-                if hair not in CHARACTER_HAIRS:
-                    hair = CHARACTER_HAIRS[0]
-                if hair_color not in CHARACTER_HAIR_COLORS:
-                    hair_color = next(iter(CHARACTER_HAIR_COLORS))
-                if eye_color not in CHARACTER_EYE_COLORS:
-                    eye_color = next(iter(CHARACTER_EYE_COLORS))
-                if outfit not in CHARACTER_OUTFITS:
-                    outfit = CHARACTER_OUTFITS[0]
-                if outfit_color not in CHARACTER_OUTFIT_COLORS:
-                    outfit_color = next(iter(CHARACTER_OUTFIT_COLORS))
-                if accessory not in CHARACTER_ACCESSORIES:
-                    accessory = CHARACTER_ACCESSORIES[0]
-                if mood not in CHARACTER_MOODS:
-                    mood = CHARACTER_MOODS[0]
+<form class="chat-form" id="dm-form">
+    <input type="text" id="dm-input" class="chat-input" maxlength="500" placeholder="Napíš súkromnú správu..." autocomplete="off" required>
+    <button type="submit" class="send-btn" id="send-btn">Odoslať</button>
+</form>
+</div>
 
-                updated_at = datetime.now().strftime("%d.%m.%Y %H:%M")
-                with get_db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            INSERT INTO character_profiles (
-                                visitor_id, char_name, style, hair, hair_color,
-                                eye_color, outfit, outfit_color, accessory, mood, bio, updated_at
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (visitor_id) DO UPDATE SET
-                                char_name = EXCLUDED.char_name,
-                                style = EXCLUDED.style,
-                                hair = EXCLUDED.hair,
-                                hair_color = EXCLUDED.hair_color,
-                                eye_color = EXCLUDED.eye_color,
-                                outfit = EXCLUDED.outfit,
-                                outfit_color = EXCLUDED.outfit_color,
-                                accessory = EXCLUDED.accessory,
-                                mood = EXCLUDED.mood,
-                                bio = EXCLUDED.bio,
-                                updated_at = EXCLUDED.updated_at
-                        """, (
-                            g.visitor_id, char_name, style, hair, hair_color,
-                            eye_color, outfit, outfit_color, accessory, mood, bio, updated_at
-                        ))
-                    conn.commit()
+<script>
+const partnerId = {{ partner.id }};
+const messagesBox = document.getElementById("messages-box");
+const dmForm = document.getElementById("dm-form");
+const dmInput = document.getElementById("dm-input");
+const sendBtn = document.getElementById("send-btn");
+let lastRenderedJson = "";
 
-                return redirect("/club?saved=1")
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
 
-    my_char = get_default_character()
-    members = []
+async function loadThread(forceScroll = false) {
+    try {
+        const response = await fetch(`/messages/${partnerId}/data`, { cache: "no-store" });
+        if (!response.ok) return;
+        const messages = await response.json();
+        const currentJson = JSON.stringify(messages);
+        if (currentJson === lastRenderedJson) return;
+        lastRenderedJson = currentJson;
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    cp.visitor_id,
-                    cp.char_name,
-                    cp.style,
-                    cp.hair,
-                    cp.hair_color,
-                    cp.eye_color,
-                    cp.outfit,
-                    cp.outfit_color,
-                    cp.accessory,
-                    cp.mood,
-                    cp.bio,
-                    COALESCE(u.nickname, 'Anonymný používateľ') AS nickname
-                FROM character_profiles cp
-                LEFT JOIN users u ON cp.visitor_id = u.visitor_id
-                ORDER BY cp.updated_at DESC
-            """)
-            rows = cur.fetchall()
+        const isNearBottom = messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 90;
 
-    import json
-    for r in rows:
-        vis_id = r[0]
-        c_data = {
-            "char_name": r[1],
-            "style": r[2],
-            "hair": r[3],
-            "hair_color": r[4],
-            "eye_color": r[5],
-            "outfit": r[6],
-            "outfit_color": r[7],
-            "accessory": r[8],
-            "mood": r[9],
-            "bio": r[10],
+        if (messages.length === 0) {
+            messagesBox.innerHTML = '<div class="empty-chat">Zatiaľ tu nie sú žiadne správy. Napíš prvú správu!</div>';
+            return;
         }
-        if vis_id == g.visitor_id:
-            my_char = c_data
 
-        acc_id = parse_account_id_from_visitor(vis_id)
-        if g.account and acc_id == g.account["id"]:
-            acc_id = None
+        messagesBox.innerHTML = messages.map(m => `
+            <div class="msg ${m.is_mine ? 'mine' : ''}">
+                <div class="msg-meta">${escapeHtml(m.created_at)}</div>
+                <div class="msg-text">${escapeHtml(m.message)}</div>
+            </div>
+        `).join("");
 
-        members.append({
-            **c_data,
-            "nickname": r[11],
-            "account_id": acc_id,
-            "avatar_json": json.dumps({
-                "hair": r[3],
-                "hair_color": r[4],
-                "eye_color": r[5],
-                "outfit": r[6],
-                "outfit_color": r[7],
-                "accessory": r[8],
-            })
-        })
+        if (forceScroll || isNearBottom) {
+            messagesBox.scrollTop = messagesBox.scrollHeight;
+        }
+    } catch (e) {}
+}
 
-    unread_dm_count = get_unread_dm_count(g.account["id"]) if g.account else 0
+dmForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = dmInput.value.trim();
+    if (!text) return;
+    sendBtn.disabled = true;
+    try {
+        const response = await fetch(`/messages/${partnerId}/send`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+        });
+        if (response.ok) {
+            dmInput.value = "";
+            await loadThread(true);
+        }
+    } finally {
+        sendBtn.disabled = false;
+        dmInput.focus();
+    }
+});
 
-    return render_template_string(
-        CLUB_HTML,
-        char=my_char,
-        members=members,
-        styles=CHARACTER_STYLES,
-        hairs=CHARACTER_HAIRS,
-        hair_colors=CHARACTER_HAIR_COLORS,
-        eye_colors=CHARACTER_EYE_COLORS,
-        outfits=CHARACTER_OUTFITS,
-        outfit_colors=CHARACTER_OUTFIT_COLORS,
-        accessories=CHARACTER_ACCESSORIES,
-        moods=CHARACTER_MOODS,
-        unread_dm_count=unread_dm_count,
-        saved=saved,
-        error=error,
-        csrf_token=get_auth_csrf()
-    )
+loadThread(true);
+setInterval(() => loadThread(false), 4000);
+</script>
+</body>
+</html>
+"""
 
 
 # ==========================================
