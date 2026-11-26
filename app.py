@@ -587,7 +587,7 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
 
 .nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
+    flex: 1; min-width: 125px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
     text-decoration: none; font-weight: bold; font-size: 14px;
     display: inline-flex; justify-content: center; align-items: center; gap: 6px;
@@ -738,6 +738,7 @@ footer a:hover { color: #42a5ff; }
         ✉️ Súkromné
         {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
     </a>
+    <a href="/games" class="nav-tab">🎮 Minihry</a>
 </nav>
 
 <div class="panel">
@@ -979,7 +980,7 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
 .subtitle { color: #9aabc0; margin: 6px 0; }
 .nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
+    flex: 1; min-width: 125px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
     text-decoration: none; font-weight: bold; font-size: 14px;
     display: inline-flex; justify-content: center; align-items: center; gap: 6px;
@@ -1022,6 +1023,7 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
         ✉️ Súkromné
         {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
     </a>
+    <a href="/games" class="nav-tab">🎮 Minihry</a>
 </nav>
 <div class="user-info-bar">
     <span>
@@ -1211,7 +1213,7 @@ h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
 .subtitle { color: #9aabc0; margin: 6px 0; }
 .nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
 .nav-tab {
-    flex: 1; min-width: 140px; text-align: center; padding: 11px 10px; background: #1d2b40;
+    flex: 1; min-width: 125px; text-align: center; padding: 11px 10px; background: #1d2b40;
     border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
     text-decoration: none; font-weight: bold; font-size: 14px;
     display: inline-flex; justify-content: center; align-items: center; gap: 6px;
@@ -1266,6 +1268,7 @@ input[type=text] {
         ✉️ Súkromné
         {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
     </a>
+    <a href="/games" class="nav-tab">🎮 Minihry</a>
 </nav>
 
 {% if not account %}
@@ -1455,6 +1458,69 @@ dmForm.addEventListener("submit", async (e) => {
 loadThread(true);
 setInterval(() => loadThread(false), 4000);
 </script>
+</body>
+</html>
+"""
+
+
+# ==========================================
+# HTML PRE MINIHRY
+# ==========================================
+
+GAMES_HTML = """
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minihry - Moja komunita</title>
+<style>
+* { box-sizing: border-box; }
+body { background: #101827; color: white; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+.container { max-width: 650px; margin: auto; }
+header { text-align: center; padding: 20px 10px; }
+h1 { color: #42a5ff; font-size: 32px; margin: 0 0 8px 0; }
+.subtitle { color: #9aabc0; margin: 6px 0; }
+.nav-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 22px; flex-wrap: wrap; }
+.nav-tab {
+    flex: 1; min-width: 125px; text-align: center; padding: 11px 10px; background: #1d2b40;
+    border: 1px solid #344761; border-radius: 10px; color: #b6c5d8;
+    text-decoration: none; font-weight: bold; font-size: 14px;
+    display: inline-flex; justify-content: center; align-items: center; gap: 6px;
+}
+.nav-tab.active { background: #2689e8; border-color: #2689e8; color: white; }
+.unread-badge {
+    background: #ff405e; color: white; border-radius: 999px;
+    padding: 1px 7px; font-size: 11px; font-weight: bold;
+}
+.panel {
+    background: #1d2b40; padding: 30px 20px; border-radius: 15px;
+    border: 1px solid #344761; text-align: center;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+    <h1>MOJA KOMUNITA</h1>
+    <p class="subtitle">Herný kútik komunity</p>
+</header>
+
+<nav class="nav-tabs">
+    <a href="/" class="nav-tab">📋 Nástenka</a>
+    <a href="/chat" class="nav-tab">💬 Chat</a>
+    <a href="/messages" class="nav-tab">
+        ✉️ Súkromné
+        {% if unread_dm_count > 0 %}<span class="unread-badge">{{ unread_dm_count }}</span>{% endif %}
+    </a>
+    <a href="/games" class="nav-tab active">🎮 Minihry</a>
+</nav>
+
+<div class="panel">
+    <h2 style="margin-top: 0;">🎮 Minihry</h2>
+    <p class="subtitle">Zatiaľ tu nie sú žiadne minihry. Čoskoro pribudnú!</p>
+</div>
+</div>
 </body>
 </html>
 """
@@ -1755,6 +1821,21 @@ def home():
         account=g.account,
         unread_dm_count=unread_dm_count,
         csrf_token=get_auth_csrf()
+    )
+
+
+# ==========================================
+# MINIHRY - ROUTE
+# ==========================================
+
+@app.route("/games")
+def games():
+    unread_dm_count = get_unread_dm_count(g.account["id"]) if g.account else 0
+    return render_template_string(
+        GAMES_HTML,
+        nickname=get_nickname(),
+        account=g.account,
+        unread_dm_count=unread_dm_count
     )
 
 
