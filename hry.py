@@ -1,6 +1,6 @@
 from flask import Blueprint, request, render_template_string, jsonify, session
+from datetime import datetime
 import os
-import secrets
 import psycopg
 
 games_bp = Blueprint("games_bp", __name__)
@@ -295,31 +295,139 @@ function initGame() {
     loadLeaderboard(currentDiff);
 }
 
+function getNeighbors(rows, cols, r, c) {
+    const out = [];
+    for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                out.push([nr, nc]);
+            }
+        }
+    }
+    return out;
+}
+
+function generateRandomLayout(rows, cols, minesCount, safeR, safeC) {
+    const mineMap = Array.from({ length: rows }, () => Array(cols).fill(false));
+    let placed = 0;
+
+    while (placed < minesCount) {
+        const r = Math.floor(Math.random() * rows);
+        const c = Math.floor(Math.random() * cols);
+        if (mineMap[r][c]) continue;
+        if (Math.abs(r - safeR) <= 1 && Math.abs(c - safeC) <= 1) continue;
+        mineMap[r][c] = true;
+        placed += 1;
+    }
+
+    const adjMap = Array.from({ length: rows }, () => Array(cols).fill(0));
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (mineMap[r][c]) continue;
+            let count = 0;
+            for (const [nr, nc] of getNeighbors(rows, cols, r, c)) {
+                if (mineMap[nr][nc]) count += 1;
+            }
+            adjMap[r][c] = count;
+        }
+    }
+
+    return { mineMap, adjMap };
+}
+
+function isLogicallySolvable(rows, cols, mineMap, adjMap, startR, startC) {
+    const revealed = Array.from({ length: rows }, () => Array(cols).fill(false));
+    const markedMines = Array.from({ length: rows }, () => Array(cols).fill(false));
+
+    function floodReveal(sr, sc) {
+        if (revealed[sr][sc] || markedMines[sr][sc] || mineMap[sr][sc]) return;
+        const stack = [[sr, sc]];
+        while (stack.length > 0) {
+            const [cr, cc] = stack.pop();
+            if (revealed[cr][cc] || markedMines[cr][cc] || mineMap[cr][cc]) continue;
+            revealed[cr][cc] = true;
+            if (adjMap[cr][cc] === 0) {
+                for (const [nr, nc] of getNeighbors(rows, cols, cr, cc)) {
+                    if (!revealed[nr][nc] && !markedMines[nr][nc] && !mineMap[nr][nc]) {
+                        stack.push([nr, nc]);
+                    }
+                }
+            }
+        }
+    }
+
+    floodReveal(startR, startC);
+
+    while (true) {
+        let progress = false;
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                if (!revealed[r][c] || adjMap[r][c] === 0) continue;
+
+                const neighbors = getNeighbors(rows, cols, r, c);
+                const hidden = [];
+                let flaggedCount = 0;
+
+                for (const [nr, nc] of neighbors) {
+                    if (markedMines[nr][nc]) flaggedCount += 1;
+                    else if (!revealed[nr][nc]) hidden.push([nr, nc]);
+                }
+
+                if (hidden.length === 0) continue;
+
+                if (flaggedCount === adjMap[r][c]) {
+                    for (const [hr, hc] of hidden) {
+                        if (!mineMap[hr][hc] && !revealed[hr][hc]) {
+                            floodReveal(hr, hc);
+                            progress = true;
+                        }
+                    }
+                } else if (flaggedCount + hidden.length === adjMap[r][c]) {
+                    for (const [hr, hc] of hidden) {
+                        if (!markedMines[hr][hc]) {
+                            markedMines[hr][hc] = true;
+                            progress = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!progress) break;
+    }
+
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (!mineMap[r][c] && !revealed[r][c]) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 function placeMines(safeR, safeC) {
     const cfg = CONFIGS[currentDiff];
-    let placed = 0;
-    while (placed < cfg.mines) {
-        const r = Math.floor(Math.random() * cfg.rows);
-        const c = Math.floor(Math.random() * cfg.cols);
-        if (grid[r][c].mine) continue;
-        if (Math.abs(r - safeR) <= 1 && Math.abs(c - safeC) <= 1) continue;
-        grid[r][c].mine = true;
-        placed += 1;
+    let chosen = null;
+    const maxAttempts = 250;
+
+    for (let i = 0; i < maxAttempts; i++) {
+        const candidate = generateRandomLayout(cfg.rows, cfg.cols, cfg.mines, safeR, safeC);
+        chosen = candidate;
+        if (isLogicallySolvable(cfg.rows, cfg.cols, candidate.mineMap, candidate.adjMap, safeR, safeC)) {
+            break;
+        }
     }
 
     for (let r = 0; r < cfg.rows; r++) {
         for (let c = 0; c < cfg.cols; c++) {
-            if (grid[r][c].mine) continue;
-            let count = 0;
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
-                    const nr = r + dr, nc = c + dc;
-                    if (nr >= 0 && nr < cfg.rows && nc >= 0 && nc < cfg.cols && grid[nr][nc].mine) {
-                        count += 1;
-                    }
-                }
-            }
-            grid[r][c].adj = count;
+            grid[r][c].mine = chosen.mineMap[r][c];
+            grid[r][c].adj = chosen.adjMap[r][c];
         }
     }
 }
@@ -378,14 +486,9 @@ function revealCell(r, c) {
         cur.revealed = true;
 
         if (cur.adj === 0) {
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
-                    const nr = cr + dr, nc = cc + dc;
-                    if (nr >= 0 && nr < grid.length && nc >= 0 && nc < grid[0].length) {
-                        if (!grid[nr][nc].revealed && !grid[nr][nc].mine) {
-                            stack.push([nr, nc]);
-                        }
-                    }
+            for (const [nr, nc] of getNeighbors(grid.length, grid[0].length, cr, cc)) {
+                if (!grid[nr][nc].revealed && !grid[nr][nc].mine) {
+                    stack.push([nr, nc]);
                 }
             }
         }
@@ -538,8 +641,6 @@ def minesweeper_leaderboard():
 
 @games_bp.route("/games/minesweeper/score", methods=["POST"])
 def minesweeper_score():
-    from datetime import datetime
-
     data = request.get_json(silent=True) or {}
     difficulty = str(data.get("difficulty", "easy"))
     if difficulty not in ("easy", "medium", "hard"):
