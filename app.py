@@ -12,6 +12,8 @@ import psycopg
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+from hry import games_bp
+app.register_blueprint(games_bp)
 
 # ==========================================
 # ADMINISTRATOR & KONFIGURACIA
